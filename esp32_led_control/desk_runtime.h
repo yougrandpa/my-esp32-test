@@ -3,6 +3,7 @@
 #ifndef DESK_NO_HARDWARE
 #include <Wire.h>
 #include <U8g2lib.h>
+#include "desk_ui.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -135,39 +136,6 @@ class DeskRuntime {
     weather.error[0] = 0;
     return true;
   }
-  const char* condition(int code) {
-    if (code == 0) return "晴";
-    if (code <= 3) return "多云";
-    if (code == 45 || code == 48) return "雾";
-    if (code >= 95) return "雷雨";
-    if ((code >= 71 && code <= 77) || code == 85 || code == 86) return "雪";
-    if (code >= 51 && code <= 82) return "雨";
-    return "未知";
-  }
-  void text(int x, int y, const char* value) {
-    screen.setFont(u8g2_font_wqy12_t_gb2312);
-    screen.drawUTF8(x, y, value);
-  }
-  // Wrap by glyph width without splitting a UTF-8 character. Long items scroll
-  // through successive pairs of lines so every saved character remains visible.
-  void itemText(const char* value, uint32_t now) {
-    screen.setFont(u8g2_font_wqy12_t_gb2312);
-    char lines[8][73] = {};
-    int row = 0, pos = 0;
-    for (const unsigned char* p = (const unsigned char*)value; *p && row < 8;) {
-      int size = *p < 128 ? 1 : *p < 224 ? 2 : *p < 240 ? 3 : 4;
-      char glyph[5] = {};
-      memcpy(glyph, p, size);
-      char test[73]; snprintf(test, sizeof(test), "%s%s", lines[row], glyph);
-      if (screen.getUTF8Width(test) > 126 && pos) { ++row; pos = 0; if (row == 8) break; }
-      memcpy(lines[row] + pos, glyph, size); pos += size; p += size;
-    }
-    const bool compact = activeDisplay.model == 1;
-    const int groups = compact ? row + 1 : (row + 2) / 2;
-    const int first = (now / 4000 % groups) * (compact ? 1 : 2);
-    text(0, compact ? 30 : 32, lines[first]);
-    if (!compact && first + 1 <= row) text(0, 47, lines[first + 1]);
-  }
   void configureDisplay() {
     const auto c = screenStore.settings();
     if (displayInitialized && c.model == activeDisplay.model && c.address == activeDisplay.address) return;
@@ -195,73 +163,11 @@ class DeskRuntime {
     configureDisplay();
     const uint32_t now = millis();
     const time_t epoch = time(nullptr);
-    const time_t local = epoch + c.offset * 60;
-    tm parts{}; gmtime_r(&local, &parts);
-    const bool clockReady = epoch >= 1704067200;
-    int alarm = -1, active[DESK_TODOS], count = 0;
-    for (int i = 0; i < DESK_TODOS; ++i) {
-      const auto& t = c.todos[i];
-      if (!t.text[0] || t.done) continue;
-      active[count++] = i;
-      if (clockReady && t.due && t.due <= epoch && !t.dismissed && (alarm < 0 || t.due < c.todos[alarm].due)) alarm = i;
-    }
-    const int page = deskPageAt(c, now);
-    char line[100];
-    screen.clearBuffer();
-    if (activeDisplay.model == 1) {
-      if (alarm >= 0) { text(0, 12, "到点提醒"); itemText(c.todos[alarm].text, now); }
-      else if (page == 1) {
-        if (clockReady) strftime(line, sizeof(line), "%H:%M:%S", &parts); else snprintf(line, sizeof(line), "--:--:--");
-        text(0, 12, c.city); screen.setFont(u8g2_font_logisoso16_tn); screen.drawStr(0, 31, line);
-      } else if (page == 2) {
-        text(0, 12, c.city);
-        if (!w.valid) text(0, 30, live ? "正在获取天气" : "请先连接 Wi-Fi");
-        else {
-          const int day = deskRotationAt(c, now, 8000, 3);
-          if ((now / 4000) % 2 == 0) snprintf(line, sizeof(line), "%.1f°C %s", w.temperature, condition(w.code));
-          else snprintf(line, sizeof(line), "%s %s %.0f~%.0f", w.days[day].date + 5, condition(w.days[day].code), w.days[day].low, w.days[day].high);
-          text(0, 30, line);
-        }
-      } else {
-        snprintf(line, sizeof(line), "待办 %d 项", count); text(0, 12, line);
-        if (!count) text(0, 30, "今天没有未完成事项");
-        else {
-          const auto& t = c.todos[active[deskRotationAt(c, now, 12000, count)]];
-          if (t.due && now / 4000 % 3 == 2) { time_t due = t.due + c.offset * 60; tm date{}; gmtime_r(&due, &date); strftime(line, sizeof(line), "%m-%d %H:%M", &date); text(0, 30, line); }
-          else itemText(t.text, now);
-        }
-      }
-    } else if (alarm >= 0) {
-      text(0, 12, "到点提醒"); itemText(c.todos[alarm].text, now); text(0, 63, "请在网页确认或完成");
-    } else if (page == 1) {
-      text(0, 12, c.city);
-      screen.setFont(u8g2_font_logisoso24_tn);
-      if (clockReady) { strftime(line, sizeof(line), "%H:%M:%S", &parts); screen.drawStr(0, 43, line); }
-      else screen.drawStr(0, 43, "--:--:--");
-      if (clockReady) { strftime(line, sizeof(line), "%Y-%m-%d", &parts); text(0, 62, line); }
-      else text(0, 62, "联网或通过网页校时");
-    } else if (page == 2) {
-      snprintf(line, sizeof(line), "%s %s", c.city, live ? "天气" : "离线"); text(0, 12, line);
-      if (!w.valid) { text(0, 34, live ? "正在获取天气" : "请先连接 Wi-Fi"); if (w.error[0]) text(0, 52, "天气请求失败，稍后重试"); }
-      else {
-        snprintf(line, sizeof(line), "%.1f°C %s%s", w.temperature, condition(w.code), epoch - w.updated > 3600 || w.error[0] ? " 旧" : ""); text(0, 27, line);
-        const int day = deskRotationAt(c, now, 8000, 3);
-        snprintf(line, sizeof(line), "%s %s", w.days[day].date + 5, condition(w.days[day].code)); text(0, 44, line);
-        snprintf(line, sizeof(line), "%.0f~%.0f°C", w.days[day].low, w.days[day].high); text(0, 62, line);
-      }
-    } else {
-      snprintf(line, sizeof(line), "待办 %d 项", count); text(0, 12, line);
-      if (!count) text(0, 37, "今天没有未完成事项");
-      else {
-        const auto& t = c.todos[active[deskRotationAt(c, now, 12000, count)]];
-        itemText(t.text, c.page ? now : now % 8000);
-        if (t.due) { time_t due = t.due + c.offset * 60; tm date{}; gmtime_r(&due, &date); strftime(line, sizeof(line), "%m-%d %H:%M", &date); text(0, 63, line); }
-        else text(0, 63, "无定时提醒");
-      }
-    }
+    DeskUi ui(screen);
+    const int page = ui.draw(c, w, live, activeDisplay.model == 1, now, epoch);
     probeDisplay(now);
     if (displayPresent) screen.sendBuffer();
-    screenStore.publish(activeDisplay, screen.getBufferPtr(), now, alarm >= 0 ? 4 : page, displayPresent);
+    screenStore.publish(activeDisplay, screen.getBufferPtr(), now, page, displayPresent);
   }
   void displayService() {
     Wire.begin(DISPLAY_SDA, DISPLAY_SCL);
