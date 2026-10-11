@@ -1,6 +1,7 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include <future>
 #include "../esp32_led_control/esp32_led_control.ino"
 
 std::string command(const std::string& text) {
@@ -8,6 +9,16 @@ std::string command(const std::string& text) {
   for (char c : text + "\n") Serial.input.push_back(c);
   while (Serial.available()) handleSerial();
   return Serial.output;
+}
+
+void request(const char* path, HTTPMethod method, std::map<std::string, std::string> values = {}) {
+  auto response = std::async(std::launch::async, [&]() { httpControl.server.request(path, method, values); });
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (response.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) {
+    assert(std::chrono::steady_clock::now() < deadline);
+    loop();
+  }
+  response.get();
 }
 
 int main() {
@@ -199,5 +210,83 @@ int main() {
   loop();
   assert(!strcmp(network.state, "off") && WiFi.radioMode == WIFI_OFF);
   assert(Serial.output.find("\"error\":\"scan_failed\"") != std::string::npos);
-  std::cout << "Firmware: LED effects, Wi-Fi provisioning, persistence, retries and async scanning passed\n";
+  assert(!httpControl.running);
+  command("WIFI CONNECT");
+  WiFi.currentStatus = WL_CONNECTED;
+  loop();
+  httpControl.service();
+  assert(httpControl.running && httpControl.server.starts >= 1);
+  auto& web = httpControl.server;
+  request("/", HTTP_GET);
+  assert(web.statusCode == 200 && web.body.size() > 1000);
+  assert((unsigned char)web.body[0] == 0x1f && (unsigned char)web.body[1] == 0x8b);
+  assert(web.responseHeaders["Content-Encoding"] == "gzip");
+  request("/web/http.mjs", HTTP_GET);
+  assert(web.statusCode == 200 && web.mime == "application/javascript; charset=utf-8");
+  request("/api/status", HTTP_GET);
+  assert(web.statusCode == 200);
+  const auto serialStatus = command("STATUS");
+  assert(serialStatus == "STATUS " + web.body + "\n");
+  assert(web.body.find("password") == std::string::npos);
+  request("/api/command", HTTP_POST, {{"command", "ON"}});
+  assert(web.statusCode == 200 && effect.mode == MODE_ON && testDuty == effect.brightness);
+  assert(web.body.find("\"reply\":\"OK ON\"") != std::string::npos);
+  command("BRIGHT 80");
+  request("/api/status", HTTP_GET);
+  assert(web.body.find("\"brightness\":80") != std::string::npos);
+  const auto phase = effectStart;
+  request("/api/command", HTTP_POST, {{"command", "BRIGHT 9999"}});
+  assert(effect.brightness == 255 && effectStart == phase);
+  assert(web.body.find("OK BRIGHT 255") != std::string::npos);
+  for (const char* invalid : {"", "OFF\nON", "BREATHE bad", "WIFI OFF", "WIFI SET 4465736b 70617373776f7264"}) {
+    request("/api/command", HTTP_POST, {{"command", invalid}});
+    assert(web.statusCode == 400 && effect.mode == MODE_ON && effect.brightness == 255);
+  }
+  request("/api/command", HTTP_POST, {{"command", std::string(256, 'x')}});
+  assert(web.statusCode == 400);
+  request("/api/command", HTTP_POST);
+  assert(web.statusCode == 400);
+  request("/api/command", HTTP_POST, {{"command", "ON"}, {"extra", "x"}});
+  assert(web.statusCode == 400);
+  web.headers["Origin"] = "http://elsewhere.example";
+  request("/api/command", HTTP_POST, {{"command", "OFF"}});
+  assert(web.statusCode == 403 && effect.mode == MODE_ON);
+  web.headers["Origin"] = "http://192.168.1.42";
+  request("/api/command", HTTP_POST, {{"command", "PING"}});
+  assert(web.statusCode == 200 && web.body.find("PONG") != std::string::npos);
+  request("/api/status", HTTP_POST);
+  assert(web.statusCode == 404);
+  command("WIFI OFF");
+  loop();
+  httpControl.service();
+  assert(!httpControl.running && web.stops >= 1);
+  const auto beforeRestart = web.starts;
+  command("WIFI CONNECT");
+  WiFi.currentStatus = WL_CONNECTED;
+  loop();
+  httpControl.service();
+  assert(httpControl.running && web.starts == beforeRestart + 1);
+
+  // A stalled HTTP read/write must not stop PWM updates or USB commands.
+  std::promise<void> entered, release;
+  auto released = release.get_future().share();
+  web.handleClientHook = [&]() { entered.set_value(); released.wait(); };
+  auto stalledHttp = std::async(std::launch::async, [&]() { httpControl.service(); });
+  entered.get_future().wait();
+  command("BRIGHT 255");
+  command("BREATHE 2000");
+  const auto started = effectStart;
+  for (uint32_t elapsed : {0u, 500u, 1000u, 1500u, 2000u}) {
+    testTime = started + elapsed;
+    loop();
+    assert(testDuty == effectDuty(effect, elapsed));
+    assert(stalledHttp.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout);
+  }
+  assert(command("PING") == "PONG\n");
+  release.set_value();
+  stalledHttp.get();
+  web.handleClientHook = {};
+  request("/api/status", HTTP_GET);
+  assert(web.statusCode == 200 && web.body.find("\"mode\":\"breathe\"") != std::string::npos);
+  std::cout << "Firmware: LED effects, Wi-Fi provisioning/scanning and LAN HTTP API passed\n";
 }

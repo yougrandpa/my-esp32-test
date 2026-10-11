@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <deque>
 #include <string>
+using String = std::string;
 #define OUTPUT 1
 inline uint32_t testTime = 0;
 inline int testDuty = -1;
@@ -19,7 +20,7 @@ struct TestSerial {
   int read() { char c = input.front(); input.pop_front(); return c; }
   void println(const char* text) { output += std::string(text) + "\n"; }
   void printf(const char* format, ...) {
-    char buffer[512];
+    char buffer[2048];
     va_list arguments;
     va_start(arguments, format);
     vsnprintf(buffer, sizeof(buffer), format, arguments);

@@ -1,4 +1,4 @@
-/* USB Web Serial LED controller. Commands and limits: see README.md. */
+/* USB / LAN HTTP LED controller. Commands and limits: see README.md. */
 #include <Arduino.h>
 #include <ctype.h>
 #include <errno.h>
@@ -23,19 +23,26 @@ void applyOutput(uint32_t now) {
   }
 }
 
-void reportStatus() {
+bool formatStatus(char* output, size_t capacity) {
   const uint32_t now = millis();
   applyOutput(now);
-  Serial.printf("STATUS {\"version\":2,\"mode\":\"%s\",\"brightness\":%d,"
+  JsonBuffer json(output, capacity);
+  json.add("{\"version\":2,\"mode\":\"%s\",\"brightness\":%d,"
                 "\"on_ms\":%lu,\"off_ms\":%lu,\"breathe_ms\":%lu,\"sos_unit_ms\":%lu,"
                 "\"elapsed_ms\":%lu,\"uptime_ms\":%lu,\"led_duty\":%d,\"pin\":%d",
                 modeName(effect.mode), effect.brightness,
                 (unsigned long)effect.onMs, (unsigned long)effect.offMs,
                 (unsigned long)effect.breatheMs, (unsigned long)effect.sosUnitMs,
                 (unsigned long)(now - effectStart), (unsigned long)now, lastDuty, LED_PIN);
-  network.report();
-  Serial.println("}");
-  lastReport = now;
+  network.appendStatus(json);
+  json.add("}");
+  return json.valid;
+}
+
+void reportStatus() {
+  char output[1024];
+  if (formatStatus(output, sizeof(output))) Serial.printf("STATUS %s\n", output);
+  lastReport = millis();
 }
 
 bool parseNumber(const char* token, int low, int high, int& result) {
@@ -48,16 +55,13 @@ bool parseNumber(const char* token, int low, int high, int& result) {
   return true;
 }
 
-void processCommand(char* line) {
+bool executeEffectCommand(char* line, char* reply, size_t capacity) {
+  // HTTP accepts one LED command, never embedded newlines or Wi-Fi credentials.
+  if (strchr(line, '\n') || strchr(line, '\r')) return false;
   char* cursor;
   char* command = strtok_r(line, " \t", &cursor);
-  if (!command) return;
+  if (!command) return false;
   for (char* c = command; *c; ++c) *c = toupper((unsigned char)*c);
-  if (!strcmp(command, "WIFI")) {
-    if (!network.command(cursor)) Serial.println("ERR invalid Wi-Fi command or arguments");
-    reportStatus();
-    return;
-  }
   char* first = strtok_r(nullptr, " \t", &cursor);
   char* second = strtok_r(nullptr, " \t", &cursor);
   char* extra = strtok_r(nullptr, " \t", &cursor);
@@ -65,11 +69,11 @@ void processCommand(char* line) {
   bool resetPhase = true;
 
   if (!strcmp(command, "STATUS") && !first) {
-    reportStatus();
-    return;
+    snprintf(reply, capacity, "STATUS");
+    return true;
   } else if (!strcmp(command, "PING") && !first) {
-    Serial.println("PONG");
-    return;
+    snprintf(reply, capacity, "PONG");
+    return true;
   } else if (!strcmp(command, "ON") && !first) {
     effect.mode = MODE_ON;
   } else if (!strcmp(command, "OFF") && !first) {
@@ -89,17 +93,36 @@ void processCommand(char* line) {
     effect.sosUnitMs = a;
     effect.mode = MODE_SOS;
   } else {
-    Serial.println("ERR invalid command or arguments");
-    return;
+    return false;
   }
 
   if (resetPhase) effectStart = millis();
   applyOutput(millis());
-  if (!strcmp(command, "BLINK")) Serial.printf("OK BLINK %d %d\n", a, b);
-  else if (first) Serial.printf("OK %s %d\n", command, a);
-  else Serial.printf("OK %s\n", command);
-  reportStatus();
+  if (!strcmp(command, "BLINK")) snprintf(reply, capacity, "OK BLINK %d %d", a, b);
+  else if (first) snprintf(reply, capacity, "OK %s %d", command, a);
+  else snprintf(reply, capacity, "OK %s", command);
+  return true;
 }
+
+void processCommand(char* line) {
+  char copy[256];
+  snprintf(copy, sizeof(copy), "%s", line);
+  char* cursor;
+  char* command = strtok_r(copy, " \t", &cursor);
+  if (!command) return;
+  for (char* c = command; *c; ++c) *c = toupper((unsigned char)*c);
+  if (!strcmp(command, "WIFI")) {
+    if (!network.command(cursor)) Serial.println("ERR invalid Wi-Fi command or arguments");
+    reportStatus();
+    return;
+  }
+  char reply[64];
+  if (!executeEffectCommand(line, reply, sizeof(reply))) { Serial.println("ERR invalid command or arguments"); return; }
+  if (strcmp(reply, "STATUS")) Serial.println(reply);
+  if (strcmp(reply, "PONG")) reportStatus();
+}
+
+#include "http_control.h"
 
 void handleSerial() {
   static char line[256];
@@ -131,7 +154,8 @@ void setup() {
   effectStart = millis();
   applyOutput(millis());
   network.begin();
-  Serial.println("ESP32 LED control ready v2 + Wi-Fi");
+  httpControl.begin();
+  Serial.println("ESP32 LED control ready v2 + Wi-Fi HTTP");
   reportStatus();
 }
 
@@ -139,6 +163,7 @@ void loop() {
   handleSerial();
   applyOutput(millis());
   network.tick(millis());
+  httpControl.tick();
   if (uint32_t(millis() - lastReport) >= 1000) reportStatus();
   delay(1);
 }

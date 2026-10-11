@@ -10,7 +10,7 @@ export function wifiConfigCommand(ssid, password) {
 }
 
 export function wifiStatus(value) {
-  if (value && ['scanning', 'scan_supported'].some(key => key in value && typeof value[key] !== 'boolean')) return null;
+  if (value && ['scanning', 'scan_supported', 'http_supported'].some(key => key in value && typeof value[key] !== 'boolean')) return null;
   return value && Object.hasOwn(WIFI_STATES, value.state) && typeof value.ssid === 'string' && new TextEncoder().encode(value.ssid).length <= 32 && typeof value.ip === 'string' && (value.ip === '' || /^(\d{1,3}\.){3}\d{1,3}$/.test(value.ip) && value.ip.split('.').every(part => Number(part) <= 255)) && Number.isInteger(value.rssi) && value.rssi >= -127 && value.rssi <= 0 && typeof value.error === 'string' ? value : null;
 }
 

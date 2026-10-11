@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
+#include "json_buffer.h"
 
 // Provision over USB; all connection attempts run without blocking the LED loop.
 class Network {
@@ -195,12 +196,11 @@ class Network {
     Serial.printf("OK WIFI %s\n", action);
     return true;
   }
-  void report() {
-    Serial.printf(",\"wifi\":{\"state\":\"%s\",\"ssid\":\"", state);
-    // Escape arbitrary SSID bytes so quotes/control characters cannot corrupt STATUS.
-    printJsonString(ssid);
+  void appendStatus(JsonBuffer& output) {
+    output.add(",\"wifi\":{\"state\":\"%s\",\"ssid\":", state);
+    output.string(ssid);
     const bool live = !strcmp(state, "connected");
-    Serial.printf("\",\"ip\":\"%s\",\"rssi\":%ld,\"error\":\"%s\",\"scan_supported\":true,\"scanning\":%s}",
+    output.add(",\"ip\":\"%s\",\"rssi\":%ld,\"error\":\"%s\",\"scan_supported\":true,\"http_supported\":true,\"scanning\":%s}",
                   live ? WiFi.localIP().toString().c_str() : "", live ? (long)WiFi.RSSI() : 0L, error, scanning ? "true" : "false");
   }
 };

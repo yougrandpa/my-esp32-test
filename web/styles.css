@@ -166,6 +166,7 @@ html[data-connection="live"] .preview-badge { color: var(--accent); border-color
 .wifi-content .notice { margin-left: 0; margin-right: 0; }
 .wifi-error { color: var(--err); font-size: 11px; line-height: 1.6; }
 .wifi-error:empty { display: none; }
+.device-web-link { display: inline-flex; margin-top: 14px; padding: 9px 12px; border: 1px solid #48553d; border-radius: 7px; color: var(--accent); background: #c8ef8908; }
 .wifi-scan-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
 .wifi-scan-heading > span, .wifi-scan-notice { color: var(--dim); font-size: 11px; line-height: 1.7; }
 .wifi-scan-notice:empty { display: none; }

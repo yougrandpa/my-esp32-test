@@ -1,6 +1,7 @@
 import { DEFAULTS, MODE_NAMES, SOS_SEGMENTS, statusConfig, dutyAt, cycleMs, modeCommand, describe } from './effects.mjs';
 import { SerialSession } from './serial.mjs';
-import { MAX_FAVORITES, readFavorites, writeFavorites } from './favorites.mjs';
+import { HttpSession } from './http.mjs';
+import { MAX_FAVORITES, readFavorites, writeFavorites, favoriteId } from './favorites.mjs';
 import { WIFI_STATES, WIFI_ERRORS, wifiConfigCommand, wifiStatus } from './wifi.mjs';
 
 const $ = id => document.getElementById(id);
@@ -8,7 +9,8 @@ const inputs = { onMs: $('onMs'), offMs: $('offMs'), brightness: $('bright'), br
 const numbers = Object.fromEntries([...document.querySelectorAll('[data-config-key]')].map(input => [input.dataset.configKey, input]));
 const editingNumbers = new Set();
 const MODE_CODES = { blink: 'BLINK', breathe: 'BREATHE', sos: 'MORSE / SOS', on: 'STEADY ON', off: 'LIGHT OFF' };
-const supported = 'serial' in navigator;
+const httpMode = globalThis.ESP32_DEVICE === true;
+const supported = httpMode || 'serial' in navigator;
 let config = { ...DEFAULTS };
 let session = null, connected = false, connecting = false, closing = false;
 let device = null, lastStatusAt = 0, previewAnchor = performance.now();
@@ -64,7 +66,7 @@ async function scanWifi() {
 }
 
 function renderWifi() {
-  const ready = connected && fresh() && !!networkStatus && !closing && !wifiBusy && !wifiScanning && !networkStatus.scanning;
+  const ready = !httpMode && connected && fresh() && !!networkStatus && !closing && !wifiBusy && !wifiScanning && !networkStatus.scanning;
   for (const id of ['wifiSsid', 'wifiPassword', 'btnWifiSave', 'btnWifiConnect', 'btnWifiOff', 'btnWifiClear']) $(id).disabled = !ready;
   $('btnWifiConnect').disabled = !ready || !networkStatus?.ssid;
   $('btnWifiScan').disabled = !ready || networkStatus?.scan_supported !== true || networkStatus?.state === 'connecting';
@@ -76,12 +78,15 @@ function renderWifi() {
     button.classList.toggle('selected', selected);
     button.setAttribute('aria-pressed', selected);
   }
-  $('wifiState').textContent = !connected ? '连接 USB 串口后配网' : !fresh() ? '设备回报过期' : !networkStatus ? '固件尚不支持 Wi-Fi，请先运行 make upload' : WIFI_STATES[networkStatus.state];
+  $('wifiState').textContent = !connected ? httpMode ? '等待设备状态' : '连接 USB 串口后配网' : !fresh() ? '设备回报过期' : !networkStatus ? '固件尚不支持 Wi-Fi，请先运行 make upload' : WIFI_STATES[networkStatus.state];
   $('wifiState').classList.toggle('confirmed', connected && fresh() && networkStatus?.state === 'connected');
   $('wifiNetwork').textContent = connected && networkStatus ? networkStatus.ssid || '—' : '—';
   $('wifiIp').textContent = connected && fresh() && networkStatus?.ip ? networkStatus.ip : '—';
   $('wifiSignal').textContent = connected && fresh() && networkStatus?.state === 'connected' ? `${networkStatus.rssi} dBm` : '—';
   $('wifiError').textContent = connected && fresh() && networkStatus?.error ? WIFI_ERRORS[networkStatus.error] || '网络连接异常' : '';
+  const webReady = !httpMode && connected && fresh() && networkStatus?.state === 'connected' && networkStatus.http_supported === true && !!networkStatus.ip;
+  $('deviceWebLink').hidden = !webReady;
+  if (webReady) $('deviceWebLink').href = `http://${networkStatus.ip}/`;
 }
 
 async function applyWifi(command) {
@@ -165,8 +170,8 @@ function renderSync() {
   document.documentElement.dataset.connection = connecting ? 'connecting' : !connected ? 'offline' : synced ? 'live' : 'stale';
   $('previewBadge').textContent = connecting ? '等待设备' : !connected ? '离线预览' : synced ? '设备预览' : '回报过期';
   $('dot').classList.toggle('on', connected);
-  $('status').textContent = closing ? '正在断开…' : connecting ? '正在连接并读取状态…' : connected ? '已连接 · USB 串口' : supported ? '未连接' : '浏览器不支持 Web Serial';
-  const syncText = connecting ? '等待设备状态…' : !connected ? '离线 · 可预览和收藏' : operationError ? `未完成：${operationError}` : waiting ? '命令发送中 · 等待设备确认…' : synced ? '已确认 · 设备每秒回报' : '状态超时 · 请读取状态或重新连接';
+  $('status').textContent = closing ? '正在断开…' : connecting ? '正在连接并读取状态…' : connected ? httpMode ? `已连接 · Wi-Fi · ${location.host}` : '已连接 · USB 串口' : supported ? '未连接' : '浏览器不支持 Web Serial';
+  const syncText = connecting ? '等待设备状态…' : !connected ? '离线 · 可预览和收藏' : operationError ? `未完成：${operationError}` : waiting ? '命令发送中 · 等待设备确认…' : synced ? httpMode ? '已确认 · 每秒同步设备状态' : '已确认 · 设备每秒回报' : '状态超时 · 请读取状态或重新连接';
   if ($('syncStatus').textContent !== syncText) $('syncStatus').textContent = syncText;
   $('syncStatus').classList.toggle('confirmed', synced && !waiting && !operationError);
   $('btnConnect').disabled = !supported || !!session || connecting || closing;
@@ -207,8 +212,8 @@ async function connect() {
   renderControls();
   let owner;
   try {
-    const port = await navigator.serial.requestPort();
-    owner = new SerialSession(port, {
+    const port = httpMode ? null : await navigator.serial.requestPort();
+    const options = {
       onStatus: status => receiveStatus(status, owner),
       onScan: result => receiveScan(result, owner),
       onLog: log,
@@ -218,7 +223,8 @@ async function connect() {
           void disconnect();
         }
       },
-    });
+    };
+    owner = httpMode ? new HttpSession(location.origin, options) : new SerialSession(port, options);
     session = owner;
     device = null;
     networkStatus = null;
@@ -227,7 +233,7 @@ async function connect() {
     $('deviceDetail').textContent = '连接后读取设备当前状态。';
     await owner.open();
     // USB opening may reset ESP32. Never send the offline draft on connect.
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    if (!httpMode) await new Promise(resolve => setTimeout(resolve, 1200));
     if (session !== owner || owner.closed || owner.failed) return;
     await owner.command('STATUS');
     if (session !== owner || owner.closed || owner.failed) return;
@@ -433,7 +439,7 @@ $('favoriteForm').addEventListener('submit', event => {
   if (favorites.some(item => item.name === name)) { $('favoriteNotice').textContent = '已有同名收藏，请使用另一个名称。'; return; }
   if (favorites.length >= MAX_FAVORITES) { $('favoriteNotice').textContent = `最多收藏 ${MAX_FAVORITES} 个灯效，请先删除一个。`; return; }
   const savedConfig = connected ? statusConfig(session.status) : { ...config };
-  const item = { id: crypto.randomUUID(), name, config: savedConfig };
+  const item = { id: favoriteId(), name, config: savedConfig };
   if (persistFavorites([...favorites, item], `已收藏「${name}」。`)) $('favoriteName').value = '';
 });
 
@@ -518,16 +524,31 @@ $('btnClear').addEventListener('click', () => {
 document.querySelector('.header-meta a').addEventListener('click', () => {
   $('help').open = true;
 });
-if (supported) navigator.serial.addEventListener('disconnect', event => {
+if (!httpMode && supported) navigator.serial.addEventListener('disconnect', event => {
   if (event.target === session?.port || event.port === session?.port) {
     log('sys', '设备已拔出。');
     void disconnect();
   }
 });
 
+if (httpMode) {
+  document.querySelector('.local-tag').textContent = 'Wi-Fi 局域网控制';
+  $('btnConnect').lastChild.textContent = '连接 Wi-Fi';
+  $('connectionIcon').setAttribute('href', '#icon-wifi');
+  $('connectIcon').setAttribute('href', '#icon-wifi');
+  $('logHeading').textContent = '操作日志';
+  $('log').setAttribute('aria-label', '操作日志内容');
+  $('wifiHeading').textContent = 'Wi-Fi 连接';
+  $('wifiProvisioning').hidden = true;
+  $('wifiHelp').textContent = '通过当前 Wi-Fi 测试灯效和查看状态。首次配网、更换网络及固件烧录使用 USB。';
+  $('deviceDetail').textContent = '正在通过 Wi-Fi 读取设备状态。';
+  document.querySelector('.footer-spec').textContent = 'ESP32 · WI-FI · HTTP';
+}
+
 try { favorites = readFavorites(localStorage); }
 catch (_) { $('favoriteNotice').textContent = '无法读取收藏：本地存储不可用或收藏数据已损坏。'; }
 renderFavorites();
 requestAnimationFrame(animate);
 setInterval(renderSync, 500);
-log('sys', supported ? '就绪。离线可预览；连接串口后读取设备状态。' : '请用 Chrome 或 Edge 连接设备；当前仍可预览和收藏。');
+log('sys', httpMode ? 'Wi-Fi 工作台就绪，正在连接设备。' : supported ? '就绪。离线可预览；连接串口后读取设备状态。' : '请用 Chrome 或 Edge 连接设备；当前仍可预览和收藏。');
+if (httpMode) void connect();

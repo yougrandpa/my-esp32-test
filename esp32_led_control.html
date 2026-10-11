@@ -8,6 +8,7 @@
   <title>ESP32 灯效工作台</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./web/styles.css" />
+  <!-- ESP32_DEVICE_MODE -->
 </head>
 <body>
 <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -18,6 +19,7 @@
   <symbol id="icon-on" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></symbol>
   <symbol id="icon-off" viewBox="0 0 24 24"><path d="M12 2v9M6.5 5.5a8 8 0 1 0 11 0"/></symbol>
   <symbol id="icon-usb" viewBox="0 0 24 24"><path d="M12 3v15M9 6l3-3 3 3M12 14l-5-3V8M12 12l5-3V6"/><circle cx="12" cy="20" r="2"/><circle cx="7" cy="7" r="1"/><path d="M16 3h2v3h-2z"/></symbol>
+  <symbol id="icon-wifi" viewBox="0 0 24 24"><path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8 16a6 6 0 0 1 8 0"/><circle cx="12" cy="20" r="1"/></symbol>
   <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5.5 7a7 7 0 0 1 11.5-2l3 3M4 16l3 3a7 7 0 0 0 11.5-2"/></symbol>
   <symbol id="icon-bookmark" viewBox="0 0 24 24"><path d="M6 4h12v17l-6-4-6 4zM9 9h6M12 6v6"/></symbol>
   <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
@@ -34,13 +36,13 @@
 
   <section class="connection-bar" aria-label="设备连接">
     <div class="connection-info">
-      <div class="usb-badge"><svg class="icon"><use href="#icon-usb"/></svg></div>
+      <div class="usb-badge"><svg class="icon"><use id="connectionIcon" href="#icon-usb"/></svg></div>
       <div><div class="connection-title">ESP32 <span class="hardware-tag">LED CONTROLLER</span></div><div class="connection-status"><span class="dot" id="dot"></span><span id="status" role="status">未连接</span></div></div>
     </div>
     <div class="connection-actions">
       <button id="btnRefresh" class="button-quiet" disabled><svg class="icon"><use href="#icon-refresh"/></svg><span>读取设备状态</span></button>
       <span class="action-divider" aria-hidden="true"></span>
-      <button class="primary" id="btnConnect"><svg class="icon"><use href="#icon-usb"/></svg>连接串口</button>
+      <button class="primary" id="btnConnect"><svg class="icon"><use id="connectIcon" href="#icon-usb"/></svg>连接串口</button>
       <button id="btnDisconnect" class="button-quiet" disabled>断开</button>
     </div>
   </section>
@@ -131,6 +133,8 @@
     <div class="wifi-content">
       <dl class="telemetry wifi-telemetry"><div><dt>当前网络</dt><dd id="wifiNetwork">—</dd></div><div><dt>IP 地址</dt><dd id="wifiIp">—</dd></div><div><dt>信号强度</dt><dd id="wifiSignal">—</dd></div></dl>
       <p class="wifi-error" id="wifiError" role="status"></p>
+      <a id="deviceWebLink" class="device-web-link" target="_blank" rel="noopener" hidden>打开 Wi-Fi 工作台 ↗</a>
+      <div id="wifiProvisioning">
       <div class="wifi-scan-heading"><button id="btnWifiScan" type="button" disabled><svg class="icon"><use href="#icon-refresh"/></svg>扫描附近 Wi-Fi</button><span>2.4 GHz · 按信号强度排序</span></div>
       <p class="wifi-scan-notice" id="wifiScanNotice" role="status"></p>
       <div class="wifi-networks" id="wifiNetworks" role="group" aria-label="附近 Wi-Fi"></div>
@@ -140,7 +144,8 @@
         <button id="btnWifiSave" class="primary" type="submit" disabled>保存并连接</button>
       </form>
       <div class="wifi-actions"><button id="btnWifiConnect" type="button" disabled>重新连接</button><button id="btnWifiOff" type="button" disabled>关闭 Wi-Fi</button><button id="btnWifiClear" type="button" disabled>清除网络配置</button></div>
-      <p class="parameter-note">ESP32 支持 2.4 GHz Wi-Fi。配置保存在板子上，重启自动连接；关闭 Wi-Fi 保留配置。连接失败后每 30 秒重试。</p>
+      </div>
+      <p class="parameter-note" id="wifiHelp">ESP32 支持 2.4 GHz Wi-Fi。配置保存在板子上，重启自动连接；关闭 Wi-Fi 保留配置。连接失败后每 30 秒重试。</p>
       <p class="notice" id="wifiNotice" role="status"></p>
     </div>
   </section>
@@ -165,7 +170,7 @@
     <li>串口一次只能被一个连接占用。连接失败时，关闭其他页面的连接或退出 Arduino 串口监视器；macOS 的 USB 串口通常以 <code>usbserial</code> 或 <code>wchusbserial</code> 命名。</li>
     <li>连接和重连会读取板子当前设定。设备每秒回报状态，预览按设备时间相位模拟；PWM 数值是固件输出回报，实际灯光以板子为准。</li>
     <li>未连接时可预览和收藏，连接后点击收藏即可应用。收藏保存在当前浏览器，清理网站数据会删除收藏。</li>
-    <li>连接串口后，在「Wi-Fi 配网」输入 2.4 GHz 网络名称和密码。配置保存在板子，显示「已连接 Wi-Fi」和 IP 才表示联网成功；联网后灯控仍通过 USB 串口进行。</li>
+    <li>首次配网使用 USB。联网后让手机或电脑连接同一网络，访问板子的 <code>http://IP地址/</code> 即可无线控制灯效、查看状态和本页操作日志。Wi-Fi 页面自动连接，不需要启动电脑上的网页服务器；烧录和更换网络继续使用 USB。</li>
     <li>如果收到 <code>ERR unknown command: STATUS</code>，需要先烧录 v2 固件。板载 LED 引脚或有效电平不同，可调整固件中的 <code>LED_PIN</code> / <code>LED_ACTIVE_LOW</code>。</li>
   </ol></div></details>
 </div>

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULTS, dutyAt, statusConfig, validConfig, modeCommand } from '../web/effects.mjs';
-import { FAVORITES_KEY, readFavorites, writeFavorites } from '../web/favorites.mjs';
+import { FAVORITES_KEY, readFavorites, writeFavorites, favoriteId } from '../web/favorites.mjs';
 import { SerialSession } from '../web/serial.mjs';
+import { HttpSession } from '../web/http.mjs';
 import { wifiConfigCommand, wifiStatus, wifiScanResult } from '../web/wifi.mjs';
 
 const status = { version: 2, mode: 'blink', brightness: 255, on_ms: 500, off_ms: 500, breathe_ms: 3000, sos_unit_ms: 150, elapsed_ms: 0, uptime_ms: 0, led_duty: 255, pin: 2 };
@@ -226,4 +227,83 @@ test('background scan data cannot acknowledge a pending LED command and handles 
   assert.ok(mock.logs.some(([kind, text]) => kind === 'err' && /扫描结果无效/.test(text)));
   assert.equal(mock.lost.length, 0);
   await mock.session.close();
+});
+
+test('favorites can be saved on plain HTTP where randomUUID is unavailable', () => {
+  assert.equal(favoriteId({ randomUUID: () => 'native-id' }), 'native-id');
+  const id = favoriteId({ getRandomValues: bytes => bytes.fill(255) });
+  assert.equal(id, 'ffffffff-ffff-4fff-bfff-ffffffffffff');
+});
+
+function mockHttp(respond, options = {}) {
+  const requests = [], states = [], logs = [], lost = [];
+  const session = new HttpSession('http://192.168.1.42', {
+    onStatus: value => states.push(value), onLog: (...args) => logs.push(args), onLost: error => lost.push(error),
+    pollMs: 0, timeoutMs: 100, ...options,
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      const response = await respond(url, init);
+      return { ok: true, status: 200, json: async () => response, ...response?.http };
+    },
+  });
+  return { session, requests, states, logs, lost };
+}
+
+test('HTTP commands and polling are serialized and update confirmed device state', async () => {
+  let current = { ...status };
+  let active = 0;
+  const mock = mockHttp(async (url, init) => {
+    assert.equal(++active, 1);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    let result = current;
+    if (url.endsWith('/api/command')) {
+      const command = new URLSearchParams(init.body).get('command');
+      current = { ...current, brightness: Number(command.split(' ')[1]) };
+      result = { ok: true, reply: `OK ${command}`, status: current };
+    }
+    --active;
+    return result;
+  });
+  await mock.session.open();
+  await Promise.all([mock.session.command('BRIGHT 80'), mock.session.command('STATUS'), mock.session.command('BRIGHT 90')]);
+  assert.equal(mock.session.status.brightness, 90);
+  assert.deepEqual(mock.requests.map(({ url }) => url.split('/api/')[1]), ['status', 'command', 'status', 'command']);
+  assert.equal(mock.states.at(-1).brightness, 90);
+  await assert.rejects(mock.session.command('WIFI SET secret secret'), /USB/);
+  assert.ok(mock.logs.every(([, text]) => !text.includes('secret')));
+  await mock.session.close();
+});
+
+test('HTTP command rejection keeps the session usable but invalid status terminates it', async () => {
+  const mock = mockHttp(async url => url.endsWith('/api/command') ? { error: 'invalid command', http: { ok: false, status: 400 } } : status);
+  await mock.session.open();
+  await assert.rejects(mock.session.command('SOS bad'), /invalid command/);
+  assert.equal(mock.lost.length, 0);
+  await mock.session.command('STATUS');
+  await mock.session.close();
+  const invalid = mockHttp(async () => ({ ...status, version: 1 }));
+  await assert.rejects(invalid.session.open(), /不兼容/);
+  assert.equal(invalid.lost.length, 1);
+  assert.equal(invalid.session.status, null);
+  await invalid.session.close();
+});
+
+test('HTTP timeout and disconnect cancel active work without retrying mutations', async () => {
+  const respond = async (_, { signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+  });
+  const mock = mockHttp(respond, { timeoutMs: 25 });
+  const first = mock.session.command('BRIGHT 80');
+  const second = mock.session.command('BRIGHT 90');
+  await Promise.all([assert.rejects(first, /超时/), assert.rejects(second, /断开/)]);
+  assert.equal(mock.requests.length, 1);
+  assert.equal(mock.lost.length, 1);
+  await mock.session.close();
+  const closing = mockHttp(respond);
+  const pending = closing.session.command('STATUS');
+  const rejected = assert.rejects(pending, /断开/);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await closing.session.close();
+  await rejected;
+  assert.equal(closing.lost.length, 0);
 });

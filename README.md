@@ -1,6 +1,6 @@
 # ESP32 LED 控制器
 
-通过浏览器 Web Serial API，经 USB 串口控制 ESP32 的 LED，支持常亮、熄灭、闪烁、真正的 PWM 呼吸灯和标准 SOS，可收藏灯效、读取设备状态，并配置 ESP32 接入 Wi-Fi。网页无前端依赖，无需安装 Node.js（运行开发测试时需要）。
+通过浏览器，经 USB 串口或 Wi-Fi 局域网控制 ESP32 的 LED，支持常亮、熄灭、闪烁、真正的 PWM 呼吸灯和标准 SOS，可收藏灯效、读取设备状态。首次 Wi-Fi 配网使用 USB；联网后可直接访问板子的网页。网页无前端依赖，无需安装 Node.js（运行开发测试时需要）。
 
 ## 硬件和环境
 
@@ -50,6 +50,8 @@ make monitor PORT=/dev/cu.usbserial-XXXX
 
 也可以在 Arduino IDE 中安装 Espressif 的 ESP32 板卡支持包，打开 `esp32_led_control/esp32_led_control.ino`，选择 **ESP32 Dev Module** 和设备端口后上传。PlatformIO 固定使用 `espressif32@6.12.0` 及其 Arduino 框架。
 
+仓库中的 `esp32_led_control/web_assets.h` 包含已生成的网页资源，Arduino IDE 可直接编译，无需 PlatformIO 的包含路径。修改 HTML、CSS 或 `web/*.mjs` 后，先在项目目录执行 `make web-assets`（或 `python3 scripts/embed_web.py`），再用 Arduino IDE 上传；PlatformIO 构建会自动更新此文件。当前固件使用 ESP32 Arduino 2.0.17 验证。
+
 ## 第一阶段功能
 
 - **呼吸灯**：PWM 按余弦曲线从 0 平滑升到设定峰值，再平滑回到 0；周期范围 200–60000 ms，默认 3000 ms。调整峰值亮度不会重启周期。
@@ -61,7 +63,9 @@ make monitor PORT=/dev/cu.usbserial-XXXX
 
 桌面页面将灯效控制和预览并排展示，设备反馈位于预览下方，收藏与日志放在第二行。滑块旁的数值框可精确输入参数，Enter 或移开焦点时会将超出范围的值限制到有效范围；周期曲线随模式、亮度和时间参数变化，连接后以设备回报的灯效和相位为准。
 
-灯控和首次配网使用 USB 串口；当前 Wi-Fi 功能用于让板子接入网络，无线灯控和 OLED 显示留待下一阶段。手机尺寸页面可查看和预览。请上传最新固件，旧固件可能不支持 Wi-Fi。上电默认仍是亮度 255、500 / 500 ms 闪烁；灯效设定未写入非易失存储，断电后恢复默认。
+首次配网使用 USB 串口；联网后，手机或电脑接入同一网络，访问 `http://板子IP/` 即可控制灯效。网页由 ESP32 提供，无需启动电脑上的网页服务器；烧录和更换网络继续使用 USB。请上传最新固件，旧固件可能不支持 Wi-Fi HTTP。上电默认仍是亮度 255、500 / 500 ms 闪烁；灯效设定未写入非易失存储，断电后恢复默认。
+
+HTTP 收发在独立 FreeRTOS 任务中运行，灯效、串口及网络配置由主循环更新。HTTP 命令通过固定大小的请求邮箱交给主循环执行并生成状态，任务之间不直接读写灯效和配网数据；慢 HTTP 请求不会阻塞 PWM 灯效或 USB 串口处理。
 
 ## Wi-Fi 接入
 
