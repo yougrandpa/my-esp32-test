@@ -13,6 +13,15 @@ class WebServer {
   Handler handleClientHook;
   int statusCode = 0, starts = 0, stops = 0;
   std::string body, mime, host = "192.168.1.42";
+  bool clientConnected = false;
+  int clientBytes = 0, idleStops = 0;
+  struct Client {
+    WebServer* server;
+    bool connected() { return server->clientConnected; }
+    int available() { return server->clientBytes; }
+    void stop() { server->clientConnected = false; ++server->idleStops; }
+  };
+  Client client() { return {this}; }
   explicit WebServer(int) {}
   void on(const char* path, HTTPMethod method, Handler handler) { routes[{path, method}] = handler; }
   void onNotFound(Handler handler) { missing = handler; }

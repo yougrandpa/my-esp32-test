@@ -307,3 +307,146 @@ test('HTTP timeout and disconnect cancel active work without retrying mutations'
   await rejected;
   assert.equal(closing.lost.length, 0);
 });
+
+const { DESK_DEFAULTS, citySearchQuery, locationCommand, todoCommand, reminderEpoch, localDate, deskStatus, weatherName } = await import('../web/desk.mjs');
+const deskData = { supported: true, display_present: true, ...DESK_DEFAULTS, epoch: 1791676800, page: 0, alarm: -1, todos: Array.from({ length: 6 }, () => ({ text: '', due: 0, done: false, dismissed: false })), weather: { valid: false, updated: 0, temperature: 0, code: 0, error: '', days: Array.from({ length: 3 }, () => ({ date: '', code: 0, low: 0, high: 0 })) } };
+
+test('desk commands preserve Chinese and respect the firmware byte limits', () => {
+  assert.equal(citySearchQuery('中国湖南长沙市'), 'Changsha');
+  assert.equal(citySearchQuery('London'), 'London');
+  assert.equal(locationCommand(DESK_DEFAULTS), 'DESK LOCATION 28.228200 112.938800 480 e995bfe6b299');
+  assert.equal(todoCommand(0, '喝水'), 'DESK TODO 0 0 e5969de6b0b4');
+  assert.ok(todoCommand(5, '中'.repeat(24), 1791676800).length < 256);
+  for (const text of ['', '中'.repeat(25), 'a\nb', 'a\0b', '\ud800']) assert.throws(() => todoCommand(0, text));
+  for (const slot of [-1, 6, 0.5]) assert.throws(() => todoCommand(slot, 'x'));
+  assert.throws(() => locationCommand({ ...DESK_DEFAULTS, latitude: NaN }));
+  assert.throws(() => locationCommand({ ...DESK_DEFAULTS, offset: 480.5 }));
+});
+
+test('reminders use the selected device timezone regardless of browser timezone', () => {
+  const epoch = reminderEpoch('2026-10-11T09:00', 480);
+  assert.equal(new Date(epoch * 1000).toISOString(), '2026-10-11T01:00:00.000Z');
+  assert.equal(localDate(epoch, 480), '2026-10-11 09:00');
+  assert.equal(reminderEpoch('2026-10-11T09:00', -300), epoch + 780 * 60);
+  assert.equal(reminderEpoch('', 480), 0);
+  for (const date of ['2026-02-30T09:00', 'bad', '2023-01-01T09:00']) assert.throws(() => reminderEpoch(date, 480));
+});
+
+test('desk status validates optional extension without breaking older firmware', () => {
+  assert.equal(deskStatus(deskData), deskData);
+  assert.equal(deskStatus(undefined), null);
+  for (const patch of [{ alarm: 6 }, { todos: [] }, { epoch: -1 }, { page: 4 }, { offset: 999 }, { weather: { ...deskData.weather, temperature: NaN } }]) assert.equal(deskStatus({ ...deskData, ...patch }), null);
+  assert.deepEqual(statusConfig({ ...status, desk: deskData }), DEFAULTS);
+  assert.equal(weatherName(0), '晴'); assert.equal(weatherName(95), '雷雨'); assert.equal(weatherName(73), '雪');
+});
+
+test('short DESK acknowledgement supports serial commands with encoded arguments', async () => {
+  const mock = mockSession((command, emit) => emit(command === 'STATUS' ? `STATUS ${JSON.stringify({ ...status, desk: deskData })}\n` : 'OK DESK\n'));
+  await mock.session.open();
+  assert.equal(await mock.session.command(todoCommand(0, '喝水')), 'OK DESK');
+  await mock.session.command('STATUS');
+  assert.deepEqual(mock.session.status.desk, deskData);
+  await mock.session.close();
+});
+
+test('desk writes use the HTTP command queue and return the confirmed extension', async () => {
+  const mock = mockHttp(async url => url.endsWith('/api/command') ? { ok: true, reply: 'OK DESK', status: { ...status, desk: deskData } } : { ...status, desk: deskData });
+  await mock.session.open();
+  assert.equal(await mock.session.command(locationCommand(DESK_DEFAULTS)), 'OK DESK');
+  assert.deepEqual(mock.session.status.desk, deskData);
+  assert.equal(new URLSearchParams(mock.requests.at(-1).init.body).get('command'), locationCommand(DESK_DEFAULTS));
+  await mock.session.close();
+});
+
+test('default HTTP transport binds native fetch to the browser global receiver', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  try {
+    globalThis.fetch = async function () { assert.equal(this, globalThis); called = true; return { ok: true, json: async () => status }; };
+    const session = new HttpSession('http://192.168.1.42', { onStatus() {}, onLog() {}, onLost() {}, pollMs: 0 });
+    await session.open();
+    assert.equal(called, true);
+    await session.close();
+  } finally { globalThis.fetch = original; }
+});
+
+
+const { decodeScreen, screenPixels, screenChecksum, displayConfig, displayCommand, newerFrame, drawScreen } = await import('../web/screen.mjs');
+function pixelFrame(height = 64, sequence = 1) {
+  const bytes = new Uint8Array(128 * height / 8);
+  bytes[0] = 0x81; bytes[127] = 0x02; bytes[128] = 1;
+  bytes[bytes.length - 1] = 0x80;
+  return { version: 1, model: `ssd1306-128x${height}`, width: 128, height, address: 60, packing: 'page-lsb', boot_id: 123, sequence, uptime_ms: 1234, page: 3, present: false, checksum: screenChecksum(bytes), pixels: Buffer.from(bytes).toString('hex') };
+}
+test('frame pixels map vertical bytes exactly at page, column and screen edges', () => {
+  for (const height of [32, 64]) {
+    const frame = decodeScreen(pixelFrame(height));
+    const pixels = screenPixels(frame);
+    const on = (x, y) => pixels[(y * 128 + x) * 4] === 195;
+    for (const [x, y] of [[0, 0], [0, 7], [0, 8], [127, 1], [127, height - 1]]) assert.equal(on(x, y), true);
+    for (const [x, y] of [[1, 0], [0, 1], [127, 0], [127, 8]]) assert.equal(on(x, y), false);
+    assert.equal(pixels.length, 128 * height * 4);
+  }
+});
+test('frame protocol rejects corrupt, truncated and incompatible packets', () => {
+  const frame = pixelFrame();
+  for (const change of [{ pixels: frame.pixels.slice(2) }, { pixels: 'ff' + frame.pixels.slice(2) }, { pixels: 'xx' + frame.pixels.slice(2) }, { checksum: -1 }, { version: 2 }, { boot_id: 0 }, { model: 'tft' }, { height: 32 }, { packing: 'row-msb' }, { sequence: 0 }, { uptime_ms: NaN }, { page: 5 }, { present: 1 }, { address: 62 }]) assert.equal(decodeScreen({ ...frame, ...change }), null);
+  assert.equal(decodeScreen(null), null);
+  assert.equal(displayConfig(frame).width, 128);
+  assert.equal(displayCommand('sh1106-128x64', 61), 'DESK DISPLAY sh1106-128x64 61');
+  assert.throws(() => displayCommand('tft', 60));
+});
+test('canvas paints device pixels using ImageData without browser text rendering', () => {
+  const frame = decodeScreen(pixelFrame(32));
+  let painted;
+  const canvas = { style: {}, dataset: {}, setAttribute() {}, getContext: () => ({ createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData: data => { painted = data.data; } }) };
+  drawScreen(canvas, frame);
+  assert.equal(canvas.width, 128); assert.equal(canvas.height, 32);
+  assert.equal(canvas.dataset.sequence, '1');
+  assert.deepEqual(painted, screenPixels(frame));
+});
+test('frame sequence rejects duplicates and out of order delivery, allowing uint32 wrap', () => {
+  assert.equal(newerFrame({ sequence: 10 }, { sequence: 10 }), false);
+  assert.equal(newerFrame({ sequence: 9 }, { sequence: 10 }), false);
+  assert.equal(newerFrame({ sequence: 11 }, { sequence: 10 }), true);
+  assert.equal(newerFrame({ sequence: 1 }, { sequence: 0xffffffff }), true);
+  assert.equal(newerFrame({ sequence: 1 }, null), true);
+  assert.equal(newerFrame({ boot_id: 2, sequence: 1 }, { boot_id: 1, sequence: 100 }), true);
+});
+test('serial frames can arrive fragmented without acknowledging another command', async () => {
+  const frame = pixelFrame(); let received;
+  const mock = mockSession((command, emit) => {
+    const packet = `SCREEN ${JSON.stringify(frame)}\n`;
+    emit(packet.slice(0, 100)); emit(packet.slice(100)); emit('PONG\n');
+  });
+  mock.session.onFrame = value => { received = value; };
+  await mock.session.open();
+  assert.equal(await mock.session.command('PING'), 'PONG');
+  assert.deepEqual(received, frame);
+  assert.equal(mock.lost.length, 0);
+  await mock.session.close();
+});
+test('HTTP polls the real framebuffer in the serialized session and validates its checksum', async () => {
+  const frame = pixelFrame(); let received;
+  const mock = mockHttp(async url => url.endsWith('/api/screen') ? frame : { ...status, display: displayConfig(frame) }, { onFrame: value => { received = value; } });
+  await mock.session.open();
+  assert.deepEqual(received, frame);
+  assert.deepEqual(mock.requests.map(r => r.url.split('/api/')[1]), ['status', 'screen']);
+  await mock.session.close();
+  const bad = mockHttp(async url => url.endsWith('/api/screen') ? { ...frame, checksum: 0 } : { ...status, display: displayConfig(frame) }, { onFrame() {} });
+  await assert.rejects(bad.session.open(), /像素帧无效/);
+  assert.equal(bad.lost.length, 1); await bad.session.close();
+});
+
+test('HTTP retries transient reads once without retrying device mutations', async () => {
+  let attempts = 0;
+  const read = mockHttp(async () => { if (++attempts === 1) throw new Error('hotspot delay'); return status; });
+  await read.session.open(); assert.equal(attempts, 2); assert.equal(read.lost.length, 0);
+  await read.session.close();
+  let writes = 0;
+  const mutation = mockHttp(async url => { if (url.endsWith('/api/command')) { writes++; throw new Error('connection lost'); } return status; });
+  await mutation.session.open();
+  await assert.rejects(mutation.session.command('DESK PAGE 3'), /connection lost/);
+  assert.equal(writes, 1); assert.equal(mutation.lost.length, 1);
+  await mutation.session.close();
+});

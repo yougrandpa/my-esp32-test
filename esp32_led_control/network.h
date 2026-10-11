@@ -196,7 +196,7 @@ class Network {
     Serial.printf("OK WIFI %s\n", action);
     return true;
   }
-  void appendStatus(JsonBuffer& output) {
+  void appendStatus(StatusJsonBuffer& output) {
     output.add(",\"wifi\":{\"state\":\"%s\",\"ssid\":", state);
     output.string(ssid);
     const bool live = !strcmp(state, "connected");

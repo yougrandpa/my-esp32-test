@@ -150,6 +150,43 @@
     </div>
   </section>
 
+  <section class="panel desk-panel" aria-labelledby="deskHeading">
+    <div class="panel-heading"><div><span class="section-index">DESK</span><h2 id="deskHeading">桌面信息屏</h2></div><span class="sync" id="deskState" role="status">连接设备后配置</span></div>
+    <div class="desk-layout">
+      <div class="desk-display">
+        <div class="oled-device">
+          <span class="oled-screw screw-tl" aria-hidden="true"></span><span class="oled-screw screw-tr" aria-hidden="true"></span>
+          <div class="oled-glass"><canvas id="deskScreen" width="128" height="64" role="img" aria-label="等待设备连接"></canvas></div>
+          <div class="oled-indicators" aria-hidden="true"><i data-screen-page="clock"></i><i data-screen-page="weather"></i><i data-screen-page="todo"></i></div>
+          <span class="oled-screw screw-bl" aria-hidden="true"></span><span class="oled-screw screw-br" aria-hidden="true"></span>
+        </div>
+        <div class="oled-stand" aria-hidden="true"></div>
+        <div class="screen-telemetry"><i id="screenSignal" aria-hidden="true"></i><span id="screenTelemetry" role="status">等待 ESP32 像素帧</span></div>
+      </div>
+      <div class="desk-management">
+        <form id="deskDisplayForm" class="desk-display-form">
+          <label>显示器型号<select id="deskModel" data-desk-write disabled><option value="ssd1306-128x64">SSD1306 · 128 × 64</option><option value="ssd1306-128x32">SSD1306 · 128 × 32</option><option value="sh1106-128x64">SH1106 · 128 × 64</option></select></label>
+          <label>I²C 地址<select id="deskAddress" data-desk-write disabled><option value="60">0x3C</option><option value="61">0x3D</option></select></label>
+          <button id="deskApplyDisplay" data-desk-write disabled type="submit">应用型号</button>
+        </form>
+        <div class="desk-screen-controls"><label for="deskPage">屏幕内容</label><select id="deskPage" data-desk-write disabled><option value="0">自动轮播</option><option value="1">时钟</option><option value="2">天气预报</option><option value="3">待办事项</option></select></div>
+        <div class="wifi-actions desk-device-actions"><button id="deskRefresh" data-desk-write disabled><svg class="icon"><use href="#icon-refresh"/></svg>刷新天气</button><button id="deskSetTime" data-desk-write disabled>用浏览器校时</button></div>
+        <p id="deskWeatherNote" class="parameter-note"></p>
+        <form id="deskLocationForm" class="desk-location-form">
+          <label for="deskCity">天气位置</label><div class="desk-city-entry"><input id="deskCity" type="text" value="长沙" placeholder="输入城市，例如长沙 / Changsha" required/><button id="deskSearch" type="button">搜索城市</button><button data-desk-write type="submit" disabled>保存位置</button></div>
+          <p id="deskSearchNote" class="parameter-note" role="status">默认湖南长沙。也可搜索其他城市或手动填写坐标。</p><div id="deskCities" class="desk-cities"></div>
+          <details class="desk-coordinates"><summary>经纬度与时区</summary><div><label>纬度<input id="deskLatitude" type="number" min="-90" max="90" step="0.000001" value="28.2282" required/></label><label>经度<input id="deskLongitude" type="number" min="-180" max="180" step="0.000001" value="112.9388" required/></label><label>UTC 时差 / 分钟<input id="deskOffset" type="number" min="-720" max="840" step="1" value="480" required/></label></div><p class="parameter-note">中国为 480（UTC+8）。海外城市使用固定时差，夏令时变化后需重新保存。</p></details>
+        </form>
+        <div class="desk-todo-heading"><h3>待办与提醒</h3><span id="deskTodoCount" class="count-tag">0 / 6</span></div>
+        <form id="deskTodoForm"><fieldset id="todoFields" disabled><label class="sr-only" for="deskTodoText">待办内容</label><input id="deskTodoText" type="text" maxlength="72" placeholder="添加一件要做的事…（最多约 24 个汉字）" required/><div class="desk-due-row"><label for="deskDue">提醒时间（可选）<input id="deskDue" type="datetime-local" min="2024-01-01T00:00" max="2099-12-31T23:59"/></label><button type="submit">添加待办</button></div><p id="deskZone" class="parameter-note">按所在地时间填写 · UTC+8</p></fieldset></form>
+        <div id="deskTodos" class="desk-todos"><p class="parameter-note">连接设备后读取待办。</p></div>
+        <p class="parameter-note">待办保存在板子上。到点提醒优先显示，点击「确认提醒」后恢复轮播；也可直接标记完成。屏幕支持常用简体中文。</p>
+      </div>
+    </div>
+    <p class="notice desk-notice" id="deskNotice" role="status"></p>
+    <p class="desk-credit">天气数据：<a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a> · 每 30 分钟更新 · 提醒需设备持续供电</p>
+  </section>
+
   <div class="utility-grid">
     <section class="panel favorites-panel" aria-labelledby="favoritesHeading">
       <div class="panel-heading"><div><span class="section-index">03</span><h2 id="favoritesHeading">灯效收藏</h2><span class="count-tag" id="favoriteCount">0 / 20</span></div><span class="panel-kicker">KEEP YOUR FAVORITES</span></div>

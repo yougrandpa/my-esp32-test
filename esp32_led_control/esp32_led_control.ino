@@ -6,6 +6,7 @@
 #include <string.h>
 #include "effects.h"
 #include "network.h"
+#include "desk_runtime.h"
 
 #define LED_PIN 2
 #define LED_ACTIVE_LOW false
@@ -26,7 +27,7 @@ void applyOutput(uint32_t now) {
 bool formatStatus(char* output, size_t capacity) {
   const uint32_t now = millis();
   applyOutput(now);
-  JsonBuffer json(output, capacity);
+  StatusJsonBuffer json(output, capacity);
   json.add("{\"version\":2,\"mode\":\"%s\",\"brightness\":%d,"
                 "\"on_ms\":%lu,\"off_ms\":%lu,\"breathe_ms\":%lu,\"sos_unit_ms\":%lu,"
                 "\"elapsed_ms\":%lu,\"uptime_ms\":%lu,\"led_duty\":%d,\"pin\":%d",
@@ -35,13 +36,16 @@ bool formatStatus(char* output, size_t capacity) {
                 (unsigned long)effect.breatheMs, (unsigned long)effect.sosUnitMs,
                 (unsigned long)(now - effectStart), (unsigned long)now, lastDuty, LED_PIN);
   network.appendStatus(json);
+  desk.appendStatus(json);
+  screenStore.appendStatus(json);
   json.add("}");
   return json.valid;
 }
 
 void reportStatus() {
-  char output[1024];
+  char output[4096];
   if (formatStatus(output, sizeof(output))) Serial.printf("STATUS %s\n", output);
+  if (screenStore.format(output, sizeof(output)) && Serial.availableForWrite() >= int(strlen(output) + 9)) Serial.printf("SCREEN %s\n", output);
   lastReport = millis();
 }
 
@@ -104,6 +108,13 @@ bool executeEffectCommand(char* line, char* reply, size_t capacity) {
   return true;
 }
 
+bool executeControlCommand(char* line, char* reply, size_t capacity) {
+  const char* p = line;
+  while (*p == ' ' || *p == '\t') ++p;
+  if (!strncasecmp(p, "DESK", 4) && (p[4] == ' ' || p[4] == '\t' || !p[4])) return executeDeskCommand(line, reply, capacity);
+  return executeEffectCommand(line, reply, capacity);
+}
+
 void processCommand(char* line) {
   char copy[256];
   snprintf(copy, sizeof(copy), "%s", line);
@@ -117,7 +128,7 @@ void processCommand(char* line) {
     return;
   }
   char reply[64];
-  if (!executeEffectCommand(line, reply, sizeof(reply))) { Serial.println("ERR invalid command or arguments"); return; }
+  if (!executeControlCommand(line, reply, sizeof(reply))) { Serial.println("ERR invalid command or arguments"); return; }
   if (strcmp(reply, "STATUS")) Serial.println(reply);
   if (strcmp(reply, "PONG")) reportStatus();
 }
@@ -149,11 +160,14 @@ void handleSerial() {
 }
 
 void setup() {
+  Serial.setTxBufferSize(8192);
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   effectStart = millis();
   applyOutput(millis());
   network.begin();
+  desk.begin();
+  deskRuntime.begin();
   httpControl.begin();
   Serial.println("ESP32 LED control ready v2 + Wi-Fi HTTP");
   reportStatus();
@@ -163,6 +177,7 @@ void loop() {
   handleSerial();
   applyOutput(millis());
   network.tick(millis());
+  deskRuntime.tick();
   httpControl.tick();
   if (uint32_t(millis() - lastReport) >= 1000) reportStatus();
   delay(1);

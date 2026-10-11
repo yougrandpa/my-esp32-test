@@ -9,12 +9,13 @@ class HttpControl {
  public:
   WebServer server{80};
   bool running = false;
+  uint32_t idleClientSince = 0;
   TaskHandle_t task = nullptr;
   std::atomic<bool> enabled{false};
   enum class Exchange { idle, pending, ready };
   std::atomic<Exchange> exchange{Exchange::idle};
   char requestCommand[256] = {};
-  char response[1200];
+  char response[4608];
   int responseCode = 200;
 
   void json(int code, const char* body) {
@@ -50,12 +51,12 @@ class HttpControl {
   }
   // Called exclusively by loop(): effect, PWM and Network stay on one task.
   void prepareResponse() {
-    char reply[64], statusOutput[1024];
+    char reply[64], statusOutput[4096];
     const bool command = requestCommand[0] != 0;
     responseCode = 200;
-    if (command && !executeEffectCommand(requestCommand, reply, sizeof(reply))) {
+    if (command && !executeControlCommand(requestCommand, reply, sizeof(reply))) {
       responseCode = 400;
-      snprintf(response, sizeof(response), "{\"error\":\"invalid LED command; Wi-Fi provisioning requires USB\"}");
+      snprintf(response, sizeof(response), "{\"error\":\"invalid control command; Wi-Fi provisioning requires USB\"}");
       return;
     }
     if (!formatStatus(statusOutput, sizeof(statusOutput))) {
@@ -64,7 +65,7 @@ class HttpControl {
       return;
     }
     if (!command) { snprintf(response, sizeof(response), "%s", statusOutput); return; }
-    JsonBuffer output(response, sizeof(response));
+    StatusJsonBuffer output(response, sizeof(response));
     output.add("{\"ok\":true,\"reply\":");
     output.string(reply);
     output.add(",\"status\":%s}", statusOutput);
@@ -76,6 +77,11 @@ class HttpControl {
   void begin() {
     const char* headers[] = {"Origin"};
     server.collectHeaders(headers, 1);
+    server.on("/api/screen", HTTP_GET, [this]() {
+      char frame[2560];
+      const bool ready = screenStore.format(frame, sizeof(frame));
+      json(ready ? 200 : 503, frame);
+    });
     server.on("/api/status", HTTP_GET, [this]() { status(); });
     server.on("/api/command", HTTP_POST, [this]() { command(); });
     for (const auto& entry : WEB_ASSETS) {
@@ -106,7 +112,17 @@ class HttpControl {
     const bool live = enabled.load(std::memory_order_acquire);
     if (live && !running) { server.begin(); running = true; }
     else if (!live && running) { server.stop(); running = false; }
-    if (running) server.handleClient();
+    if (running) {
+      server.handleClient();
+      // Chrome speculative TCP connections may send no HTTP request. The
+      // Arduino server waits five seconds for each, blocking every queued peer.
+      // After handleClient returns, only an idle request connection remains.
+      auto client = server.client();
+      if (client.connected() && !client.available()) {
+        if (!idleClientSince) idleClientSince = millis();
+        else if (uint32_t(millis() - idleClientSince) >= 250) { client.stop(); idleClientSince = 0; }
+      } else idleClientSince = 0;
+    } else idleClientSince = 0;
   }
   void tick() {
     enabled.store(task && network.enabled && WiFi.status() == WL_CONNECTED, std::memory_order_release);

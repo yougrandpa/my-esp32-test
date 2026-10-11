@@ -13,6 +13,8 @@ inline void pinMode(int, int) {}
 inline void analogWrite(int, int duty) { testDuty = duty; }
 inline void delay(int) {}
 struct TestSerial {
+  size_t setTxBufferSize(size_t size) { return size; }
+  int availableForWrite() { return 8192; }
   std::deque<char> input;
   std::string output;
   void begin(int) {}
@@ -20,7 +22,7 @@ struct TestSerial {
   int read() { char c = input.front(); input.pop_front(); return c; }
   void println(const char* text) { output += std::string(text) + "\n"; }
   void printf(const char* format, ...) {
-    char buffer[2048];
+    char buffer[8192];
     va_list arguments;
     va_start(arguments, format);
     vsnprintf(buffer, sizeof(buffer), format, arguments);

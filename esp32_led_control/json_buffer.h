@@ -4,12 +4,12 @@
 #include <stddef.h>
 
 // Fixed-size JSON output shared by serial and HTTP, including SSID escaping.
-class JsonBuffer {
+class StatusJsonBuffer {
  public:
   char* data;
   size_t capacity, length = 0;
   bool valid = true;
-  JsonBuffer(char* output, size_t size) : data(output), capacity(size) {
+  StatusJsonBuffer(char* output, size_t size) : data(output), capacity(size) {
     if (capacity) data[0] = 0;
     else valid = false;
   }

@@ -223,3 +223,64 @@ code { padding: 2px 5px; color: var(--amber); background: #242c20; border: 1px s
 @media (max-width: 860px) { .workspace { width: calc(100% - 32px); padding-top: 22px; }.workbench, .utility-grid { grid-template-columns: minmax(0, 1fr); }.light-instrument { min-height: 240px; }.preview-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }.preview-panel > .panel-heading { grid-column: 1 / -1; }.light-instrument { grid-row: span 2; }.waveform { display: flex; flex-direction: column; justify-content: center; padding-top: 20px; }.device-feedback { border-left: 1px solid var(--line); }.telemetry { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }.feedback-heading { flex-direction: column; gap: 7px; }.sync { text-align: left; }.panel-kicker { display: inline; }.timing-section { min-height: 120px; }.favorites { grid-template-columns: repeat(2, minmax(0, 1fr)); }.log { height: 148px; } }
 @media (max-width: 560px) { .workspace { width: calc(100% - 28px); padding-top: 20px; }.page-header { margin-bottom: 20px; }.brand { gap: 10px; }.brand-mark { width: 39px; height: 39px; }.brand-mark .icon { width: 24px; height: 24px; }h1 { font-size: 23px; }.eyebrow { font-size: 8px; }.header-meta { gap: 0; }.header-meta a { font-size: 11px; }.local-tag { display: none; }.connection-bar { flex-wrap: wrap; padding: 14px; gap: 14px; margin-bottom: 14px; }.connection-info { flex: 1; }.hardware-tag { font-size: 8px; }.connection-actions { width: 100%; gap: 5px; }.connection-actions #btnRefresh { margin-right: auto; padding-left: 0; font-size: 10px; }.connection-actions #btnConnect { font-size: 11px; padding: 9px 10px; }.connection-actions #btnDisconnect { font-size: 11px; padding: 9px 7px; }.action-divider { display: none; }.panel-heading { padding: 13px 16px; min-height: 48px; }.panel-kicker { font-size: 8px; }.workbench, .utility-grid { gap: 14px; }.mode-section, .timing-section, .brightness-section, .preset-section { padding-left: 16px; padding-right: 16px; }.mode-selector { gap: 5px; }.mode-selector button { height: 82px; }.mode-selector small { font-size: 7px; }.section-label > span { font-size: 10px; }.parameter-grid { gap: 12px; }.parameter-heading label { font-size: 11px; }.number-field { gap: 3px; padding: 4px 5px; }.number-field input { width: 41px; font-size: 11px; }.number-field span { font-size: 8px; }.brightness-value { gap: 9px; }.brightness-value input { width: 25px; }.brightness-percent { font-size: 18px; }.presets { gap: 5px; }.presets button { font-size: 10px; padding: 8px 3px; }.presets .icon { display: none; }.preview-panel { display: flex; }.light-instrument { min-height: 250px; }.waveform { padding: 10px 18px 16px; }.device-feedback { border-left: 0; padding: 14px 18px; }.feedback-heading { flex-direction: row; align-items: baseline; gap: 10px; }.sync { text-align: right; }.telemetry { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }.telemetry dd { font-size: 10px; }.telemetry dt { font-size: 9px; }.utility-grid { margin-top: 14px; }.save-form { margin: 15px 16px 0; gap: 6px; }.save-form input { font-size: 11px; padding: 10px 9px; }.save-form button { padding: 9px 8px; font-size: 11px; }.save-form .icon { display: none; }.collection-hint, .notice { margin-left: 16px; margin-right: 16px; }.favorites { padding-left: 16px; padding-right: 16px; grid-template-columns: 1fr; }.footer-spec { display: none; }.page-footer { font-size: 9px; }.help-content { font-size: 11px; }.log { margin: 12px; }.log > div { gap: 5px; }.log .entry-tag { flex-basis: 20px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
+
+/* A physical monochrome display, separated from the flat web controls. */
+.desk-panel { margin-top: 18px; }
+.desk-layout { display: grid; grid-template-columns: minmax(300px, .9fr) minmax(0, 1.1fr); }
+.desk-display { padding: 58px 34px 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 440px; background: radial-gradient(ellipse at 50% 48%, #27404640, transparent 65%), repeating-linear-gradient(90deg, #c7e1dd04 0 1px, transparent 1px 32px), repeating-linear-gradient(0deg, #c7e1dd04 0 1px, transparent 1px 32px), #101715; border-right: 1px solid var(--line); }
+.oled-device { width: 100%; max-width: 460px; position: relative; z-index: 1; padding: 29px 26px 17px; background: linear-gradient(160deg, #404845, #242b29 34%, #171d1c 75%, #343c38); border: 1px solid #66746a; border-radius: 18px; box-shadow: 0 28px 40px #0007, 0 2px 0 #82908666 inset, 0 -3px 0 #050907, 0 0 0 5px #1e2622; }
+.oled-glass { background: #030809; border: 8px solid #080e0f; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px #465553, 0 0 0 2px #111919, 0 3px 8px #000c inset, 0 0 24px #76cfe40a; position: relative; }
+.oled-glass::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, #0000 0 3px, #0003 3px 4px); opacity: .22; }
+#deskScreen { display: block; width: 100%; aspect-ratio: auto; height: auto; image-rendering: pixelated; }
+#deskScreen.is-stale { opacity: .42; }
+.oled-indicators { display: flex; justify-content: center; align-items: center; gap: 9px; padding-top: 17px; }
+.oled-indicators i { height: 3px; width: 15px; border-radius: 2px; background: #090e0c; box-shadow: 0 1px 0 #68766e44; }
+.oled-indicators i.active { background: #b5eaf3; box-shadow: 0 0 8px #6daab966; }
+.oled-screw { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: linear-gradient(130deg, #a3b0a7, #39443d 45%, #151d18 55%, #78867c); box-shadow: 0 0 0 1px #111, 0 1px 1px #fff3 inset; }
+.screw-tl { top: 11px; left: 12px; }.screw-tr { top: 11px; right: 12px; }.screw-bl { bottom: 11px; left: 12px; }.screw-br { bottom: 11px; right: 12px; }
+.oled-stand { height: 52px; width: 44%; max-width: 204px; position: relative; background: linear-gradient(90deg, #1b2420, #465049 49%, #1b2420); clip-path: polygon(28% 0, 72% 0, 76% 77%, 100% 89%, 100% 100%, 0 100%, 0 89%, 24% 77%); border-bottom: 3px solid #69776b; filter: drop-shadow(0 9px 6px #0008); }
+.desk-screen-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text); }
+.desk-device-actions { margin-top: 12px; }
+.desk-device-actions .icon { width: 13px; height: 13px; }
+#deskWeatherNote { margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.desk-panel select, .desk-panel input[type="number"], .desk-panel input[type="datetime-local"] { background: #141b15; color: var(--text); padding: 8px; border: 1px solid #3a4337; border-radius: 6px; font: 11px var(--mono); min-width: 0; }
+.desk-management { padding: 24px; }
+.desk-location-form > label { display: block; margin-bottom: 10px; font-size: 11px; color: var(--muted); }
+.desk-city-entry { display: flex; gap: 8px; }
+.desk-city-entry button { font-size: 11px; padding: 8px; white-space: nowrap; }
+.desk-cities { display: flex; gap: 6px; flex-wrap: wrap; }
+.desk-cities button { font-size: 11px; padding: 8px; }
+.desk-coordinates { font-size: 11px; color: var(--muted); margin-top: 12px; }
+.desk-coordinates summary { cursor: pointer; }
+.desk-coordinates > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.desk-coordinates label { display: grid; gap: 8px; }
+.desk-coordinates input { width: 100%; }
+.desk-todo-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 24px 0 12px; border-top: 1px solid #344633; padding-top: 20px; }
+.desk-todo-heading h3 { margin: 0; font-weight: 500; font-size: 12px; }
+.desk-panel fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.desk-due-row { display: flex; justify-content: space-between; align-items: end; gap: 10px; margin-top: 10px; }
+.desk-due-row label { display: grid; gap: 7px; color: var(--muted); font-size: 10px; min-width: 0; }
+.desk-due-row button { white-space: nowrap; font-size: 11px; }
+.desk-todos { margin-top: 14px; }
+.desk-todo { display: flex; align-items: center; gap: 8px; border-top: 1px solid #303b2b; padding: 12px 0; }
+.desk-todo > div { flex: 1; min-width: 0; }
+.desk-todo strong { font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.desk-todo small { display: block; color: var(--muted); font-size: 10px; line-height: 1.6; margin-top: 4px; }
+.desk-todo button { font-size: 10px; padding: 6px; flex-shrink: 0; }
+.desk-todo > button:first-child { font: 18px var(--mono); color: var(--accent); border-color: transparent; background: none; }
+.desk-todo.is-done strong { text-decoration: line-through; color: var(--dim); }
+.desk-todo.is-due strong { color: var(--amber); }
+.desk-notice { margin-bottom: 12px; }
+.desk-credit { margin: 0; padding: 12px 24px; border-top: 1px solid #303b2b; color: var(--dim); font-size: 10px; line-height: 1.8; }
+.desk-credit a { color: var(--muted); }
+@media (max-width: 850px) { .desk-layout { grid-template-columns: 1fr; }.desk-display { min-height: 310px; padding: 36px 24px 28px; border-right: 0; border-bottom: 1px solid var(--line); }.oled-device { max-width: 430px; } }
+@media (max-width: 420px) { .desk-management { padding: 16px; }.desk-display { padding: 30px 20px 24px; min-height: 250px; }.oled-device { padding: 24px 17px 15px; border-radius: 14px; }.oled-glass { border-width: 5px; }.desk-city-entry { flex-wrap: wrap; }.desk-city-entry input { flex-basis: 100%; }.desk-coordinates > div { grid-template-columns: 1fr; }.desk-due-row { flex-wrap: wrap; } }
+
+.desk-display-form { display: grid; grid-template-columns: minmax(0, 1fr) 85px auto; gap: 10px; align-items: end; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+.desk-display-form label { display: grid; gap: 8px; color: var(--muted); font-size: 11px; }
+.desk-display-form select { width: 100%; }
+.desk-display-form button { padding: 9px; font-size: 11px; white-space: nowrap; }
+.screen-telemetry { display: flex; align-items: center; gap: 8px; margin-top: 27px; color: #8baba5; font: 9px var(--mono); letter-spacing: .04em; }
+#screenSignal { width: 5px; height: 5px; border-radius: 50%; background: #46534f; }
+#screenSignal.live { background: #b5eaf3; box-shadow: 0 0 7px #b5eaf399; }
+@media (max-width: 420px) { .desk-display-form { grid-template-columns: minmax(0, 1fr) 85px; }.desk-display-form button { grid-column: 1 / -1; } }

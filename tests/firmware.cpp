@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <future>
+#define DESK_NO_HARDWARE
 #include "../esp32_led_control/esp32_led_control.ino"
 
 std::string command(const std::string& text) {
@@ -267,6 +268,15 @@ int main() {
   httpControl.service();
   assert(httpControl.running && web.starts == beforeRestart + 1);
 
+  // Empty Chrome preconnections must not occupy the sole HTTP client for 5 s.
+  web.clientConnected = true; web.clientBytes = 0;
+  const auto idleStart = testTime;
+  httpControl.service();
+  testTime = idleStart + 249; httpControl.service(); assert(web.clientConnected);
+  testTime = idleStart + 250; httpControl.service(); assert(!web.clientConnected && web.idleStops == 1);
+  web.clientConnected = true; web.clientBytes = 1;
+  testTime += 1000; httpControl.service(); assert(web.clientConnected && web.idleStops == 1);
+  web.clientConnected = false; web.clientBytes = 0;
   // A stalled HTTP read/write must not stop PWM updates or USB commands.
   std::promise<void> entered, release;
   auto released = release.get_future().share();
@@ -288,5 +298,109 @@ int main() {
   web.handleClientHook = {};
   request("/api/status", HTTP_GET);
   assert(web.statusCode == 200 && web.body.find("\"mode\":\"breathe\"") != std::string::npos);
-  std::cout << "Firmware: LED effects, Wi-Fi provisioning/scanning and LAN HTTP API passed\n";
+  // A complete automatic rotation must reach every forecast day and todo slot.
+  bool forecastSeen[3] = {}, todoSeen[6] = {};
+  DeskConfig rotation;
+  for (uint32_t now = 0; now < 144000; now += 1000) {
+    if (deskPageAt(rotation, now) == 2) forecastSeen[deskRotationAt(rotation, now, 8000, 3)] = true;
+    if (deskPageAt(rotation, now) == 3) todoSeen[deskRotationAt(rotation, now, 12000, 6)] = true;
+  }
+  for (bool seen : forecastSeen) assert(seen);
+  for (bool seen : todoSeen) assert(seen);
+  rotation.page = 3;
+  assert(deskPageAt(rotation, 0) == 3 && deskRotationAt(rotation, 12000, 12000, 6) == 1);
+  assert(deskRotationAt(rotation, 0, 12000, 0) == 0);
+  // Persistent desk settings, bounded commands, Unicode and alarm lifecycle.
+  assert(std::string(desk.config.city) == "长沙" && desk.config.offset == 480);
+  assert(command("DESK TIME 1791676800").find("OK DESK\nSTATUS ") == 0);
+  assert(desk.epoch == 1791676800u);
+  assert(command("DESK LOCATION 28.2282 112.9388 480 e995bfe6b299").find("OK DESK") == 0);
+  assert(command("DESK TODO 0 1791676800 e5969de6b0b4").find("OK DESK") == 0); // 喝水
+  assert(desk.alarm() == 0);
+  command("DESK TODO 1 1791676799 e4bc9ae8aeae"); // Earlier overdue item takes priority.
+  assert(desk.alarm() == 1);
+  command("DESK DISMISS 1");
+  assert(desk.alarm() == 0 && desk.config.todos[1].dismissed);
+  command("DESK DONE 0 1");
+  assert(desk.alarm() == -1);
+  command("DESK DONE 0 0");
+  assert(desk.alarm() == 0 && !desk.config.todos[0].dismissed);
+  const auto savedDesk = desk.config;
+  const auto revision = desk.revision;
+  for (const char* invalid : {"DESK", "DESK TODO 6 0 41", "DESK TODO 0 1 41", "DESK TODO 0 0 00", "DESK TODO 0 0 0a", "DESK TODO 0 0 c080", "DESK TODO 0 0 eda080", "DESK TODO 0 0 e4b8", "DESK LOCATION nan 112 480 41", "DESK LOCATION 91 112 480 41", "DESK LOCATION 28 112 841 41", "DESK DONE 0 2", "DESK PAGE 4", "DESK REFRESH extra", "DESK TIME 0"}) {
+    assert(command(invalid).find("ERR ") == 0);
+    assert(desk.revision == revision);
+  }
+  Preferences::failWrites = true;
+  assert(command("DESK DELETE 0").find("ERR ") == 0);
+  assert(desk.config.todos[0].text[0] && desk.revision == revision);
+  Preferences::failWrites = false;
+  Desk deskRebooted;
+  deskRebooted.begin();
+  assert(std::string(deskRebooted.config.todos[0].text) == "喝水");
+  assert(deskRebooted.config.todos[1].dismissed);
+  assert(deskRebooted.epoch == 0 && deskRebooted.alarm() == -1); // No guessed time after power loss.
+  command("WIFI CLEAR");
+  Desk afterWifiClear;
+  afterWifiClear.begin();
+  assert(std::string(afterWifiClear.config.city) == savedDesk.city);
+  assert(std::string(afterWifiClear.config.todos[0].text) == "喝水");
+  // Maximum-size escaping still fits serial/HTTP status and fails safely in small buffers.
+  std::string escapedHex;
+  for (int i = 0; i < 72; ++i) escapedHex += i % 2 ? "5c" : "22";
+  for (int i = 0; i < DESK_TODOS; ++i) assert(command("DESK TODO " + std::to_string(i) + " 0 " + escapedHex).find("OK DESK") == 0);
+  char full[4096], tiny[32];
+  assert(formatStatus(full, sizeof(full)) && !formatStatus(tiny, sizeof(tiny)));
+  assert(command("DESK TODO 0 0 " + escapedHex + "41").find("ERR ") == 0);
+  command("WIFI CONNECT"); // Reprovision since CLEAR removed credentials.
+  command("WIFI SET 4465736b 70617373776f7264");
+  WiFi.currentStatus = WL_CONNECTED;
+  loop(); httpControl.service();
+  request("/api/command", HTTP_POST, {{"command", "DESK PAGE 3"}});
+  assert(web.statusCode == 200 && desk.config.page == 3 && web.body.find("OK DESK") != std::string::npos);
+  request("/api/command", HTTP_POST, {{"command", "DESK DELETE 0"}});
+  assert(web.statusCode == 200 && !desk.config.todos[0].text[0]);
+  request("/api/command", HTTP_POST, {{"command", "DESK PAGE 9"}});
+  assert(web.statusCode == 400 && desk.config.page == 3);
+  request("/api/command", HTTP_POST, {{"command", "DESK PAGE 1\nOFF"}});
+  assert(web.statusCode == 400 && desk.config.page == 3);
+  request("/web/desk.mjs", HTTP_GET);
+  assert(web.statusCode == 200);
+  const auto beforeRefresh = desk.refresh;
+  command("DESK REFRESH");
+  assert(desk.refresh == beforeRefresh + 1);
+  // Display settings survive reboot independently of existing version-1 todos.
+  assert(command("DESK DISPLAY ssd1306-128x32 61").find("OK DESK") == 0);
+  assert(screenStore.settings().model == 1 && screenStore.settings().address == 61);
+  ScreenStore rebootedScreen; rebootedScreen.begin();
+  assert(rebootedScreen.settings().model == 1 && rebootedScreen.settings().address == 61);
+  for (const char* invalid : {"DESK DISPLAY tft 60", "DESK DISPLAY ssd1306-128x64 62", "DESK DISPLAY ssd1306-128x64 60 extra", "DESK DISPLAY ssd1306-128x64", "DESK DISPLAY"}) {
+    assert(command(invalid).find("ERR ") == 0);
+    assert(screenStore.settings().model == 1);
+  }
+  Preferences::failWrites = true;
+  assert(command("DESK DISPLAY sh1106-128x64 60").find("ERR ") == 0);
+  assert(screenStore.settings().model == 1);
+  Preferences::failWrites = false;
+  request("/api/screen", HTTP_GET);
+  assert(web.statusCode == 503 && web.body.find("screen_not_ready") != std::string::npos);
+  uint8_t pixels[1024] = {}; pixels[0] = 0x81; pixels[511] = 0x80;
+  screenStore.publish(screenStore.settings(), pixels, 100, 3, false);
+  request("/api/screen", HTTP_GET);
+  assert(web.statusCode == 200 && web.body.find("\"pixels\":\"81") != std::string::npos);
+  assert(web.body.find("\"height\":32") != std::string::npos && web.body.find("\"present\":false") != std::string::npos);
+  assert(screenStore.latest().checksum == screenChecksum(pixels, 512));
+  assert(!screenStore.format(tiny, sizeof(tiny)));
+  // Concurrent snapshots must never combine metadata/checksum from another frame.
+  auto publisher = std::async(std::launch::async, [&]() {
+    uint8_t bytes[1024];
+    for (int i = 0; i < 500; ++i) { memset(bytes, i & 255, sizeof(bytes)); screenStore.publish(screenStore.settings(), bytes, i, 1, false); }
+  });
+  for (int i = 0; i < 500; ++i) {
+    const auto frame = screenStore.latest();
+    assert(frame.checksum == screenChecksum(frame.pixels, SCREEN_MODELS[frame.config.model].height * 16));
+  }
+  publisher.get();
+  reportStatus(); assert(Serial.output.find("SCREEN ") != std::string::npos);
+  std::cout << "Firmware: effects, Wi-Fi, HTTP and persistent desk/reminders passed\n";
 }

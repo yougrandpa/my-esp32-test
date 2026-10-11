@@ -2,6 +2,7 @@ import { DEFAULTS, MODE_NAMES, SOS_SEGMENTS, statusConfig, dutyAt, cycleMs, mode
 import { SerialSession } from './serial.mjs';
 import { HttpSession } from './http.mjs';
 import { MAX_FAVORITES, readFavorites, writeFavorites, favoriteId } from './favorites.mjs';
+import { mountDesk } from './desk.mjs';
 import { WIFI_STATES, WIFI_ERRORS, wifiConfigCommand, wifiStatus } from './wifi.mjs';
 
 const $ = id => document.getElementById(id);
@@ -20,6 +21,8 @@ let waveSignature = '';
 let paintedDuty = -1;
 let networkStatus = null, wifiBusy = false;
 let wifiScanning = false, wifiScanTimer = null, nearbyNetworks = [];
+
+const deskUi = mountDesk({ getSession: () => session, isReady: () => connected && fresh() && !closing });
 
 function receiveScan(result, owner) {
   if (session !== owner || !wifiScanning) return;
@@ -165,6 +168,7 @@ function renderControls() {
 
 function renderSync() {
   renderWifi();
+  deskUi.connection();
   const waiting = pending();
   const synced = connected && fresh();
   document.documentElement.dataset.connection = connecting ? 'connecting' : !connected ? 'offline' : synced ? 'live' : 'stale';
@@ -192,6 +196,7 @@ function receiveStatus(status, owner) {
   device = { ...confirmed, elapsedMs: status.elapsed_ms, duty: status.led_duty };
   networkStatus = wifiStatus(status.wifi);
   lastStatusAt = performance.now();
+  deskUi.accept(status.desk, owner, { display: status.display, uptimeMs: status.uptime_ms, online: networkStatus?.state === 'connected' });
   // Use only the cycle phase, so long uptimes do not reduce preview precision.
   previewAnchor = lastStatusAt - status.elapsed_ms % cycleMs(confirmed);
   $('deviceMode').textContent = MODE_NAMES[confirmed.mode];
@@ -215,6 +220,7 @@ async function connect() {
     const port = httpMode ? null : await navigator.serial.requestPort();
     const options = {
       onStatus: status => receiveStatus(status, owner),
+      onFrame: frame => deskUi.acceptFrame(frame, owner),
       onScan: result => receiveScan(result, owner),
       onLog: log,
       onLost: error => {

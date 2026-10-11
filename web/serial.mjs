@@ -1,9 +1,10 @@
+import { decodeScreen } from './screen.mjs';
 import { statusConfig } from './effects.mjs';
 import { safeSerialText, wifiScanResult } from './wifi.mjs';
 
 export class SerialSession {
-  constructor(port, { onStatus, onLog, onLost, onScan, timeoutMs = 2500 }) {
-    Object.assign(this, { port, onStatus, onLog, onLost, onScan, timeoutMs });
+  constructor(port, { onStatus, onLog, onLost, onScan, onFrame, timeoutMs = 2500 }) {
+    Object.assign(this, { port, onStatus, onLog, onLost, onScan, onFrame, timeoutMs });
     this.queue = Promise.resolve();
     this.closed = false;
     this.status = null;
@@ -23,7 +24,7 @@ export class SerialSession {
   async transact(command) {
     if (this.closed || this.failed) throw new Error('串口已断开');
     const response = new Promise((resolve, reject) => {
-      this.pending = { resolve, reject, expected: command === 'STATUS' ? 'STATUS' : command === 'PING' ? 'PONG' : command.startsWith('WIFI SET ') ? 'OK WIFI SET' : `OK ${command}`, timer: setTimeout(() => this.fail(new Error('设备响应超时，请检查固件或重新连接')), this.timeoutMs) };
+      this.pending = { resolve, reject, expected: command === 'STATUS' ? 'STATUS' : command === 'PING' ? 'PONG' : command.startsWith('DESK ') ? 'OK DESK' : command.startsWith('WIFI SET ') ? 'OK WIFI SET' : `OK ${command}`, timer: setTimeout(() => this.fail(new Error('设备响应超时，请检查固件或重新连接')), this.timeoutMs) };
     });
     // Install the rejection handler before an asynchronous write can fail.
     const handled = response.then(value => ({ value }), error => ({ error }));
@@ -53,6 +54,14 @@ export class SerialSession {
   }
   receive(line) {
     if (this.closed || this.failed) return;
+    if (line.startsWith('SCREEN ')) {
+      try {
+        const frame = JSON.parse(line.slice(7));
+        if (!decodeScreen(frame)) throw new Error('Invalid screen frame');
+        this.onFrame?.(frame);
+      } catch (_) { this.onLog('err', '屏幕像素帧无效，请更新固件'); }
+      return;
+    }
     if (line.startsWith('WIFI_SCAN ')) {
       try {
         const result = wifiScanResult(JSON.parse(line.slice(10)));
