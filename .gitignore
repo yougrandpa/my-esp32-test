@@ -1,0 +1,12 @@
+.DS_Store
+.venv/
+.pio/
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
+.playwright-cli/
+output/playwright/

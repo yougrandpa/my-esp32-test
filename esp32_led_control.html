@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#111512" />
+  <title>ESP32 灯效工作台</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./web/styles.css" />
+</head>
+<body>
+<svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="icon-light" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M8 14a6 6 0 1 1 8 0c-1 .8-1 1.8-1 2H9c0-.2 0-1.2-1-2Z"/><path d="M12 1v1M3 5l1 1M20 6l1-1M1 12h2M21 12h2"/></symbol>
+  <symbol id="icon-blink" viewBox="0 0 24 24"><path d="M2 17h4V7h6v10h6V7h4"/></symbol>
+  <symbol id="icon-breathe" viewBox="0 0 24 24"><path d="M2 17c4 0 4-10 10-10s6 10 10 10"/></symbol>
+  <symbol id="icon-sos" viewBox="0 0 24 24"><path d="M2 12h.5M5 12h.5M8 12h.5M12 12h3M19 12h3"/></symbol>
+  <symbol id="icon-on" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></symbol>
+  <symbol id="icon-off" viewBox="0 0 24 24"><path d="M12 2v9M6.5 5.5a8 8 0 1 0 11 0"/></symbol>
+  <symbol id="icon-usb" viewBox="0 0 24 24"><path d="M12 3v15M9 6l3-3 3 3M12 14l-5-3V8M12 12l5-3V6"/><circle cx="12" cy="20" r="2"/><circle cx="7" cy="7" r="1"/><path d="M16 3h2v3h-2z"/></symbol>
+  <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5.5 7a7 7 0 0 1 11.5-2l3 3M4 16l3 3a7 7 0 0 0 11.5-2"/></symbol>
+  <symbol id="icon-bookmark" viewBox="0 0 24 24"><path d="M6 4h12v17l-6-4-6 4zM9 9h6M12 6v6"/></symbol>
+  <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
+</svg>
+
+<div class="workspace">
+  <header class="page-header">
+    <div class="brand">
+      <div class="brand-mark"><svg class="icon"><use href="#icon-light"/></svg></div>
+      <div><p class="eyebrow">ESP32 / LIGHT CONTROL</p><h1>灯效工作台<span class="title-period">.</span></h1></div>
+    </div>
+    <div class="header-meta"><span class="local-tag">USB 本地控制</span><a href="#help">使用说明 <span aria-hidden="true">↗</span></a></div>
+  </header>
+
+  <section class="connection-bar" aria-label="设备连接">
+    <div class="connection-info">
+      <div class="usb-badge"><svg class="icon"><use href="#icon-usb"/></svg></div>
+      <div><div class="connection-title">ESP32 <span class="hardware-tag">LED CONTROLLER</span></div><div class="connection-status"><span class="dot" id="dot"></span><span id="status" role="status">未连接</span></div></div>
+    </div>
+    <div class="connection-actions">
+      <button id="btnRefresh" class="button-quiet" disabled><svg class="icon"><use href="#icon-refresh"/></svg><span>读取设备状态</span></button>
+      <span class="action-divider" aria-hidden="true"></span>
+      <button class="primary" id="btnConnect"><svg class="icon"><use href="#icon-usb"/></svg>连接串口</button>
+      <button id="btnDisconnect" class="button-quiet" disabled>断开</button>
+    </div>
+  </section>
+
+  <main class="workbench">
+    <section class="panel control-panel" aria-labelledby="controlHeading">
+      <div class="panel-heading"><div><span class="section-index">01</span><h2 id="controlHeading">调节灯效</h2></div><span class="panel-kicker">MAKE IT GLOW</span></div>
+      <div class="mode-section">
+        <div class="section-label">运行模式 <span>选择一种光的节奏</span></div>
+        <div class="mode-selector" id="modeSeg" role="group" aria-label="灯效模式">
+          <button data-mode="blink" aria-label="闪烁" aria-pressed="true" class="active"><svg class="icon"><use href="#icon-blink"/></svg><span>闪烁</span><small aria-hidden="true">BLINK</small></button>
+          <button data-mode="breathe" aria-label="呼吸" aria-pressed="false"><svg class="icon"><use href="#icon-breathe"/></svg><span>呼吸</span><small aria-hidden="true">BREATHE</small></button>
+          <button data-mode="sos" aria-label="SOS" aria-pressed="false"><svg class="icon"><use href="#icon-sos"/></svg><span>SOS</span><small aria-hidden="true">MORSE</small></button>
+          <button data-mode="on" aria-label="常亮" aria-pressed="false"><svg class="icon"><use href="#icon-on"/></svg><span>常亮</span><small aria-hidden="true">ON</small></button>
+          <button data-mode="off" aria-label="熄灭" aria-pressed="false"><svg class="icon"><use href="#icon-off"/></svg><span>熄灭</span><small aria-hidden="true">OFF</small></button>
+        </div>
+      </div>
+
+      <div class="timing-section">
+        <div class="parameter-grid" id="blinkControls">
+          <div class="parameter">
+            <div class="parameter-heading"><label for="onMs">亮灯时长</label><div class="number-field"><input id="onNumber" type="number" data-config-key="onMs" min="10" max="60000" step="1" value="500" aria-label="亮灯时长精确值"/><span>ms</span></div></div>
+            <input type="range" id="onMs" min="10" max="60000" step="1" value="500" />
+            <div class="range-ends"><span>10 ms</span><span>60 s</span></div>
+          </div>
+          <div class="parameter">
+            <div class="parameter-heading"><label for="offMs">灭灯时长</label><div class="number-field"><input id="offNumber" type="number" data-config-key="offMs" min="10" max="60000" step="1" value="500" aria-label="灭灯时长精确值"/><span>ms</span></div></div>
+            <input type="range" id="offMs" min="10" max="60000" step="1" value="500" />
+            <div class="range-ends"><span>10 ms</span><span>60 s</span></div>
+          </div>
+        </div>
+        <div class="parameter" id="breatheControls" hidden>
+          <div class="parameter-heading"><label for="breatheMs">呼吸周期</label><div class="number-field"><input id="breatheNumber" type="number" data-config-key="breatheMs" min="200" max="60000" step="1" value="3000" aria-label="呼吸周期精确值"/><span>ms</span></div></div>
+          <input type="range" id="breatheMs" min="200" max="60000" step="1" value="3000" />
+          <p class="parameter-note">从熄灭平滑变亮，再缓缓变暗。一个周期，一次呼吸。</p>
+        </div>
+        <div class="parameter" id="sosControls" hidden>
+          <div class="parameter-heading"><label for="sosUnitMs">SOS 时间单位</label><div class="number-field"><input id="sosNumber" type="number" data-config-key="sosUnitMs" min="50" max="2000" step="1" value="150" aria-label="SOS 时间单位精确值"/><span>ms</span></div></div>
+          <input type="range" id="sosUnitMs" min="50" max="2000" step="1" value="150" />
+          <p class="parameter-note"><span class="morse-code">··· −−− ···</span> 短亮 1、长亮 3；间隔 1 / 3 / 7 个时间单位。</p>
+        </div>
+        <div class="static-parameter" id="staticControls" hidden><svg class="icon"><use id="staticIcon" href="#icon-on"/></svg><p id="staticDescription">持续点亮，亮度由下方调节。</p></div>
+      </div>
+
+      <div class="brightness-section">
+        <div class="parameter-heading"><label for="bright">亮度 <span class="label-detail">/ 呼吸峰值</span></label><div class="brightness-value"><span class="brightness-percent" id="brightnessPercent">100<small>%</small></span><div class="number-field"><input id="brightNumber" type="number" data-config-key="brightness" min="0" max="255" step="1" value="255" aria-label="亮度精确值"/><span>/ 255</span></div></div></div>
+        <input type="range" id="bright" min="0" max="255" step="1" value="255" />
+        <div class="range-ends"><span>熄灭</span><span>最亮</span></div>
+      </div>
+
+      <div class="preset-section"><div class="section-label">快速预设</div><div class="presets" id="presets">
+        <button data-mode="blink" data-on="2000" data-off="2000"><span class="preset-mark" aria-hidden="true">· &nbsp; ·</span>慢闪</button>
+        <button data-mode="blink" data-on="500" data-off="500"><span class="preset-mark" aria-hidden="true">· · ·</span>中速</button>
+        <button data-mode="blink" data-on="100" data-off="100"><span class="preset-mark" aria-hidden="true">·····</span>快闪</button>
+        <button data-mode="breathe" data-breathe="3000"><svg class="icon"><use href="#icon-breathe"/></svg>呼吸灯</button>
+        <button data-mode="sos" data-sos="150"><svg class="icon"><use href="#icon-sos"/></svg>标准 SOS</button>
+      </div></div>
+    </section>
+
+    <section class="panel preview-panel" aria-labelledby="previewHeading">
+      <div class="panel-heading"><div><span class="section-index">02</span><h2 id="previewHeading">灯光预览</h2></div><span class="preview-badge" id="previewBadge">离线预览</span></div>
+      <div class="light-instrument">
+        <div class="instrument-label"><span id="previewMode">闪烁</span><span class="instrument-code" id="previewModeCode">BLINK</span></div>
+        <div class="led-stage">
+          <div class="stage-axis axis-horizontal" aria-hidden="true"></div><div class="stage-axis axis-vertical" aria-hidden="true"></div>
+          <div class="stage-ring ring-outer" aria-hidden="true"></div><div class="stage-ring ring-inner" aria-hidden="true"></div>
+          <span class="stage-tick tick-top" aria-hidden="true"></span><span class="stage-tick tick-bottom" aria-hidden="true"></span><span class="stage-tick tick-left" aria-hidden="true"></span><span class="stage-tick tick-right" aria-hidden="true"></span>
+          <div class="led-glow" id="ledGlow"></div><div class="led-mount"><div class="led" id="led"></div></div>
+        </div>
+        <p class="preview-caption" id="previewCaption">离线模拟 · 闪烁</p>
+      </div>
+      <div class="waveform"><div class="waveform-heading"><span>周期曲线</span><span id="cycleLabel">1.00 s / 周期</span></div>
+        <svg class="wave-svg" viewBox="0 0 440 46" role="img" aria-label="闪烁灯效周期曲线" id="waveChart" preserveAspectRatio="none">
+          <path class="wave-grid" d="M0 40H440M110 0V46M220 0V46M330 0V46"/>
+          <path id="waveArea" class="wave-area"/><path id="wavePath" class="wave-path"/>
+          <line id="waveCursor" class="wave-cursor" x1="0" x2="0" y1="0" y2="46"/>
+        </svg>
+      </div>
+      <div class="device-feedback"><div class="feedback-heading"><h3>设备反馈</h3><span class="sync" id="syncStatus" role="status">离线 · 可预览和收藏</span></div>
+        <dl class="telemetry"><div><dt>运行模式</dt><dd id="deviceMode">—</dd></div><div><dt>设定亮度</dt><dd id="deviceBright">—</dd></div><div><dt>瞬时 PWM</dt><dd id="deviceDuty">—</dd></div><div><dt>运行时间</dt><dd id="deviceUptime">—</dd></div></dl>
+        <p class="device-detail" id="deviceDetail">连接后读取设备当前状态。</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="utility-grid">
+    <section class="panel favorites-panel" aria-labelledby="favoritesHeading">
+      <div class="panel-heading"><div><span class="section-index">03</span><h2 id="favoritesHeading">灯效收藏</h2><span class="count-tag" id="favoriteCount">0 / 20</span></div><span class="panel-kicker">KEEP YOUR FAVORITES</span></div>
+      <form class="save-form" id="favoriteForm"><label class="sr-only" for="favoriteName">收藏名称</label><input id="favoriteName" type="text" maxlength="24" placeholder="为当前灯效起个名字…" required/><button id="btnSaveFavorite" type="submit"><svg class="icon"><use href="#icon-bookmark"/></svg>收藏当前灯效</button></form>
+      <p class="collection-hint">保存在此浏览器。连接时收藏已确认的灯效，离线时收藏预览。</p>
+      <p class="notice" id="favoriteNotice" role="status"></p><div class="favorites" id="favorites"></div>
+    </section>
+    <section class="panel log-panel" aria-labelledby="logHeading">
+      <div class="panel-heading"><div><span class="section-index">04</span><h2 id="logHeading">串口日志</h2><span class="count-tag" id="logCount">0 条</span></div><button id="btnClear" class="button-quiet small-button">清空</button></div>
+      <div class="log" id="log" role="region" aria-label="串口日志内容" tabindex="0"></div>
+    </section>
+  </div>
+
+  <footer class="page-footer"><span><span class="footer-mark" aria-hidden="true"></span>每一种节奏，都有一点光。</span><span class="footer-spec">ESP32 · WEB SERIAL · 115200</span></footer>
+  <details class="help" id="help"><summary>使用说明与连接排查 <span aria-hidden="true">＋</span></summary><div class="help-content"><ol>
+    <li>首次使用或升级后，先在本目录执行 <code>make upload</code> 烧录固件，再执行 <code>make serve</code> 启动网页。启动网页不会自动更新板子。</li>
+    <li>用 Chrome 或 Edge 访问 <code>http://localhost:8000/esp32_led_control.html</code>，点击「连接串口」并选择 ESP32 的 USB 串口。Safari / Firefox 不支持 Web Serial。</li>
+    <li>串口一次只能被一个连接占用。连接失败时，关闭其他页面的连接或退出 Arduino 串口监视器；macOS 的 USB 串口通常以 <code>usbserial</code> 或 <code>wchusbserial</code> 命名。</li>
+    <li>连接和重连会读取板子当前设定。设备每秒回报状态，预览按设备时间相位模拟；PWM 数值是固件输出回报，实际灯光以板子为准。</li>
+    <li>未连接时可预览和收藏，连接后点击收藏即可应用。收藏保存在当前浏览器，清理网站数据会删除收藏。</li>
+    <li>如果收到 <code>ERR unknown command: STATUS</code>，需要先烧录 v2 固件。板载 LED 引脚或有效电平不同，可调整固件中的 <code>LED_PIN</code> / <code>LED_ACTIVE_LOW</code>。</li>
+  </ol></div></details>
+</div>
+<script type="module" src="./web/app.mjs"></script>
+</body>
+</html>
