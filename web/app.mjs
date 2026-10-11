@@ -1,6 +1,7 @@
 import { DEFAULTS, MODE_NAMES, SOS_SEGMENTS, statusConfig, dutyAt, cycleMs, modeCommand, describe } from './effects.mjs';
 import { SerialSession } from './serial.mjs';
 import { MAX_FAVORITES, readFavorites, writeFavorites } from './favorites.mjs';
+import { WIFI_STATES, WIFI_ERRORS, wifiConfigCommand, wifiStatus } from './wifi.mjs';
 
 const $ = id => document.getElementById(id);
 const inputs = { onMs: $('onMs'), offMs: $('offMs'), brightness: $('bright'), breatheMs: $('breatheMs'), sosUnitMs: $('sosUnitMs') };
@@ -15,6 +16,94 @@ let desired = null, sendTimer = null, applying = false, operationError = '';
 let favorites = [];
 let waveSignature = '';
 let paintedDuty = -1;
+let networkStatus = null, wifiBusy = false;
+let wifiScanning = false, wifiScanTimer = null, nearbyNetworks = [];
+
+function receiveScan(result, owner) {
+  if (session !== owner || !wifiScanning) return;
+  clearTimeout(wifiScanTimer);
+  wifiScanTimer = null;
+  wifiScanning = false;
+  nearbyNetworks = result.networks;
+  $('wifiScanNotice').textContent = result.error ? '扫描失败，请稍后重试。' : !nearbyNetworks.length ? '未找到可见网络，可重新扫描或手动输入隐藏网络名称。' : `发现 ${nearbyNetworks.length} 个网络，点击选择。${result.truncated ? '仅显示信号最强的扫描结果。' : ''}`;
+  $('wifiNetworks').replaceChildren();
+  nearbyNetworks.forEach((network, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.index = index;
+    const name = document.createElement('strong');
+    name.textContent = network.ssid;
+    const detail = document.createElement('span');
+    detail.textContent = `${network.secure ? '加密' : '开放'} · ${network.rssi} dBm`;
+    button.append(name, detail);
+    $('wifiNetworks').append(button);
+  });
+  renderWifi();
+}
+
+async function scanWifi() {
+  const owner = session;
+  if ($('btnWifiScan').disabled || !owner) return;
+  wifiScanning = true;
+  nearbyNetworks = [];
+  $('wifiNetworks').replaceChildren();
+  $('wifiScanNotice').textContent = '正在扫描附近的 2.4 GHz Wi-Fi…';
+  wifiScanTimer = setTimeout(() => {
+    wifiScanning = false;
+    wifiScanTimer = null;
+    if (session === owner) { $('wifiScanNotice').textContent = '扫描结果超时，请重新扫描。'; renderWifi(); }
+  }, 18000);
+  renderWifi();
+  try { await owner.command('WIFI SCAN'); }
+  catch (error) {
+    clearTimeout(wifiScanTimer);
+    wifiScanTimer = null;
+    wifiScanning = false;
+    if (session === owner) { $('wifiScanNotice').textContent = `扫描失败：${error.message}`; renderWifi(); }
+  }
+}
+
+function renderWifi() {
+  const ready = connected && fresh() && !!networkStatus && !closing && !wifiBusy && !wifiScanning && !networkStatus.scanning;
+  for (const id of ['wifiSsid', 'wifiPassword', 'btnWifiSave', 'btnWifiConnect', 'btnWifiOff', 'btnWifiClear']) $(id).disabled = !ready;
+  $('btnWifiConnect').disabled = !ready || !networkStatus?.ssid;
+  $('btnWifiScan').disabled = !ready || networkStatus?.scan_supported !== true || networkStatus?.state === 'connecting';
+  $('btnWifiScan').textContent = wifiScanning || networkStatus?.scanning ? '扫描中…' : '扫描附近 Wi-Fi';
+  $('btnWifiScan').title = networkStatus && networkStatus.scan_supported !== true ? '请更新固件以支持扫描' : networkStatus?.state === 'connecting' ? '等待本次连接完成后再扫描' : '';
+  for (const button of $('wifiNetworks').children) {
+    button.disabled = !ready;
+    const selected = nearbyNetworks[Number(button.dataset.index)]?.ssid === $('wifiSsid').value;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-pressed', selected);
+  }
+  $('wifiState').textContent = !connected ? '连接 USB 串口后配网' : !fresh() ? '设备回报过期' : !networkStatus ? '固件尚不支持 Wi-Fi，请先运行 make upload' : WIFI_STATES[networkStatus.state];
+  $('wifiState').classList.toggle('confirmed', connected && fresh() && networkStatus?.state === 'connected');
+  $('wifiNetwork').textContent = connected && networkStatus ? networkStatus.ssid || '—' : '—';
+  $('wifiIp').textContent = connected && fresh() && networkStatus?.ip ? networkStatus.ip : '—';
+  $('wifiSignal').textContent = connected && fresh() && networkStatus?.state === 'connected' ? `${networkStatus.rssi} dBm` : '—';
+  $('wifiError').textContent = connected && fresh() && networkStatus?.error ? WIFI_ERRORS[networkStatus.error] || '网络连接异常' : '';
+}
+
+async function applyWifi(command) {
+  const owner = session;
+  if (!owner || !connected || !fresh() || !networkStatus || wifiBusy) return;
+  wifiBusy = true;
+  $('wifiNotice').textContent = '';
+  renderWifi();
+  try {
+    await owner.command(command);
+    await owner.command('STATUS');
+    if (session === owner && connected) {
+      $('wifiNotice').textContent = command.startsWith('WIFI SET ') ? '配置已保存到 ESP32，正在连接；实际结果见上方状态。' : '设备已接受操作。';
+      if (command === 'WIFI CLEAR') $('wifiSsid').value = '';
+    }
+  } catch (error) {
+    if (session === owner) $('wifiNotice').textContent = `操作失败：${error.message}`;
+  } finally {
+    wifiBusy = false;
+    renderWifi();
+  }
+}
 
 function log(kind, message) {
   const entry = document.createElement('div');
@@ -70,6 +159,7 @@ function renderControls() {
 }
 
 function renderSync() {
+  renderWifi();
   const waiting = pending();
   const synced = connected && fresh();
   document.documentElement.dataset.connection = connecting ? 'connecting' : !connected ? 'offline' : synced ? 'live' : 'stale';
@@ -95,6 +185,7 @@ function receiveStatus(status, owner) {
   const confirmed = statusConfig(status);
   if (!confirmed) return;
   device = { ...confirmed, elapsedMs: status.elapsed_ms, duty: status.led_duty };
+  networkStatus = wifiStatus(status.wifi);
   lastStatusAt = performance.now();
   // Use only the cycle phase, so long uptimes do not reduce preview precision.
   previewAnchor = lastStatusAt - status.elapsed_ms % cycleMs(confirmed);
@@ -119,6 +210,7 @@ async function connect() {
     const port = await navigator.serial.requestPort();
     owner = new SerialSession(port, {
       onStatus: status => receiveStatus(status, owner),
+      onScan: result => receiveScan(result, owner),
       onLog: log,
       onLost: error => {
         if (session === owner) {
@@ -129,6 +221,8 @@ async function connect() {
     });
     session = owner;
     device = null;
+    networkStatus = null;
+    $('wifiNotice').textContent = '';
     for (const id of ['deviceMode', 'deviceBright', 'deviceDuty', 'deviceUptime']) $(id).textContent = '—';
     $('deviceDetail').textContent = '连接后读取设备当前状态。';
     await owner.open();
@@ -159,6 +253,14 @@ async function disconnect() {
   desired = null;
   if (device) config = Object.fromEntries(Object.keys(DEFAULTS).map(key => [key, device[key]]));
   device = null;
+  networkStatus = null;
+  clearTimeout(wifiScanTimer);
+  wifiScanTimer = null;
+  wifiScanning = false;
+  nearbyNetworks = [];
+  $('wifiNetworks').replaceChildren();
+  $('wifiScanNotice').textContent = '';
+  $('wifiPassword').value = '';
   previewAnchor = performance.now();
   $('deviceDetail').textContent = '已断开 · 上方为最后一次设备回报。';
   renderControls();
@@ -375,6 +477,31 @@ $('presets').addEventListener('click', event => {
   edit(next, true);
 });
 $('btnConnect').addEventListener('click', connect);
+$('btnWifiScan').addEventListener('click', () => void scanWifi());
+$('wifiNetworks').addEventListener('click', event => {
+  const button = event.target.closest('button[data-index]');
+  if (!button || button.disabled) return;
+  const network = nearbyNetworks[Number(button.dataset.index)];
+  if (!network) return;
+  $('wifiSsid').value = network.ssid;
+  $('wifiPassword').value = '';
+  $('wifiPassword').placeholder = network.secure ? '输入所选网络的密码' : '开放网络，无需密码';
+  renderWifi();
+  if (network.secure) $('wifiPassword').focus();
+});
+$('wifiSsid').addEventListener('input', renderWifi);
+$('wifiForm').addEventListener('submit', event => {
+  event.preventDefault();
+  if ($('btnWifiSave').disabled) return;
+  try {
+    const command = wifiConfigCommand($('wifiSsid').value, $('wifiPassword').value);
+    $('wifiPassword').value = '';
+    void applyWifi(command);
+  } catch (error) { $('wifiNotice').textContent = error.message; }
+});
+for (const [id, command] of Object.entries({ btnWifiConnect: 'WIFI CONNECT', btnWifiOff: 'WIFI OFF', btnWifiClear: 'WIFI CLEAR' })) {
+  $(id).addEventListener('click', () => void applyWifi(command));
+}
 $('btnDisconnect').addEventListener('click', () => void disconnect());
 $('btnRefresh').addEventListener('click', async () => {
   const owner = session;

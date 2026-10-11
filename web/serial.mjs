@@ -1,8 +1,9 @@
 import { statusConfig } from './effects.mjs';
+import { safeSerialText, wifiScanResult } from './wifi.mjs';
 
 export class SerialSession {
-  constructor(port, { onStatus, onLog, onLost, timeoutMs = 2500 }) {
-    Object.assign(this, { port, onStatus, onLog, onLost, timeoutMs });
+  constructor(port, { onStatus, onLog, onLost, onScan, timeoutMs = 2500 }) {
+    Object.assign(this, { port, onStatus, onLog, onLost, onScan, timeoutMs });
     this.queue = Promise.resolve();
     this.closed = false;
     this.status = null;
@@ -22,7 +23,7 @@ export class SerialSession {
   async transact(command) {
     if (this.closed || this.failed) throw new Error('串口已断开');
     const response = new Promise((resolve, reject) => {
-      this.pending = { resolve, reject, expected: command === 'STATUS' ? 'STATUS' : command === 'PING' ? 'PONG' : `OK ${command}`, timer: setTimeout(() => this.fail(new Error('设备响应超时，请检查固件或重新连接')), this.timeoutMs) };
+      this.pending = { resolve, reject, expected: command === 'STATUS' ? 'STATUS' : command === 'PING' ? 'PONG' : command.startsWith('WIFI SET ') ? 'OK WIFI SET' : `OK ${command}`, timer: setTimeout(() => this.fail(new Error('设备响应超时，请检查固件或重新连接')), this.timeoutMs) };
     });
     // Install the rejection handler before an asynchronous write can fail.
     const handled = response.then(value => ({ value }), error => ({ error }));
@@ -30,7 +31,7 @@ export class SerialSession {
     // Keep the rejection handler attached even if the session closes first.
     try {
       this.writer.write(new TextEncoder().encode(command + '\n')).then(
-        () => { if (!this.closed && !this.failed) this.onLog('tx', command); },
+        () => { if (!this.closed && !this.failed) this.onLog('tx', safeSerialText(command)); },
         error => this.fail(error),
       );
     } catch (error) { this.fail(error); }
@@ -52,6 +53,14 @@ export class SerialSession {
   }
   receive(line) {
     if (this.closed || this.failed) return;
+    if (line.startsWith('WIFI_SCAN ')) {
+      try {
+        const result = wifiScanResult(JSON.parse(line.slice(10)));
+        if (!result) throw new Error('Invalid scan result');
+        this.onScan?.(result);
+      } catch (_) { this.onLog('err', 'Wi-Fi 扫描结果无效，请重新扫描'); }
+      return; // Background scans never acknowledge or reject an unrelated LED command.
+    }
     if (line.startsWith('STATUS ')) {
       try {
         const status = JSON.parse(line.slice(7));
@@ -62,11 +71,11 @@ export class SerialSession {
         this.onLog('err', '状态数据无效，请上传 v2 固件');
         return;
       }
-    } else this.onLog(line.startsWith('ERR') ? 'err' : 'rx', line);
+    } else this.onLog(line.startsWith('ERR') ? 'err' : 'rx', safeSerialText(line));
     if (!this.pending) return;
     if (line.startsWith('ERR')) {
       const outdated = this.pending.expected === 'STATUS' && /^ERR unknown command:\s*STATUS$/i.test(line);
-      this.rejectPending(new Error(outdated ? '板子仍是旧版固件，不支持状态同步；请运行 make upload 烧录 v2 固件后重新连接。' : line));
+      this.rejectPending(new Error(outdated ? '板子仍是旧版固件，不支持状态同步；请运行 make upload 烧录 v2 固件后重新连接。' : safeSerialText(line)));
     }
     else if ((this.pending.expected === 'STATUS' && line.startsWith('STATUS ')) || line === this.pending.expected) {
       const pending = this.pending;
@@ -89,7 +98,7 @@ export class SerialSession {
           buffer = buffer.slice(newline + 1);
           if (line) this.receive(line);
         }
-        if (buffer.length > 2048) throw new Error('串口数据异常');
+        if (buffer.length > 8192) throw new Error('串口数据异常');
       }
       if (!this.closed) throw new Error('设备已断开');
     } catch (error) {

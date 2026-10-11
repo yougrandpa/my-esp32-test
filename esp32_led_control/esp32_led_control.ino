@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "effects.h"
+#include "network.h"
 
 #define LED_PIN 2
 #define LED_ACTIVE_LOW false
@@ -27,11 +28,13 @@ void reportStatus() {
   applyOutput(now);
   Serial.printf("STATUS {\"version\":2,\"mode\":\"%s\",\"brightness\":%d,"
                 "\"on_ms\":%lu,\"off_ms\":%lu,\"breathe_ms\":%lu,\"sos_unit_ms\":%lu,"
-                "\"elapsed_ms\":%lu,\"uptime_ms\":%lu,\"led_duty\":%d,\"pin\":%d}\n",
+                "\"elapsed_ms\":%lu,\"uptime_ms\":%lu,\"led_duty\":%d,\"pin\":%d",
                 modeName(effect.mode), effect.brightness,
                 (unsigned long)effect.onMs, (unsigned long)effect.offMs,
                 (unsigned long)effect.breatheMs, (unsigned long)effect.sosUnitMs,
                 (unsigned long)(now - effectStart), (unsigned long)now, lastDuty, LED_PIN);
+  network.report();
+  Serial.println("}");
   lastReport = now;
 }
 
@@ -50,6 +53,11 @@ void processCommand(char* line) {
   char* command = strtok_r(line, " \t", &cursor);
   if (!command) return;
   for (char* c = command; *c; ++c) *c = toupper((unsigned char)*c);
+  if (!strcmp(command, "WIFI")) {
+    if (!network.command(cursor)) Serial.println("ERR invalid Wi-Fi command or arguments");
+    reportStatus();
+    return;
+  }
   char* first = strtok_r(nullptr, " \t", &cursor);
   char* second = strtok_r(nullptr, " \t", &cursor);
   char* extra = strtok_r(nullptr, " \t", &cursor);
@@ -94,7 +102,7 @@ void processCommand(char* line) {
 }
 
 void handleSerial() {
-  static char line[96];
+  static char line[256];
   static size_t length = 0;
   static bool overflow = false;
   // Bound each pass so sustained input cannot starve the LED animation.
@@ -106,6 +114,7 @@ void handleSerial() {
         line[length] = '\0';
         processCommand(line);
       }
+      memset(line, 0, sizeof(line));
       length = 0;
       overflow = false;
     } else if (!overflow) {
@@ -121,13 +130,15 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   effectStart = millis();
   applyOutput(millis());
-  Serial.println("ESP32 LED control ready v2");
+  network.begin();
+  Serial.println("ESP32 LED control ready v2 + Wi-Fi");
   reportStatus();
 }
 
 void loop() {
   handleSerial();
   applyOutput(millis());
+  network.tick(millis());
   if (uint32_t(millis() - lastReport) >= 1000) reportStatus();
   delay(1);
 }
