@@ -2,6 +2,7 @@
 #include <U8g2lib.h>
 #include <time.h>
 #include "desk.h"
+#include "wifi_signal.h"
 
 // All composition lives in the device renderer. The browser only copies these
 // pixels, including the compact layout, icons, clipping and text pagination.
@@ -51,24 +52,35 @@ class DeskUi {
     s.drawVLine(x + 3, y + 1, 3);
     s.drawHLine(x + 3, y + 3, 3);
   }
-  void network(bool live) {
+  void network(bool live, int rssi) {
+    char label[12];
+    if (!live) snprintf(label, sizeof(label), "OFF");
+    else if (!wifiSignalMeasured(live, rssi)) snprintf(label, sizeof(label), "--dBm");
+    else snprintf(label, sizeof(label), "%ddBm", rssi);
+    s.setFont(u8g2_font_5x7_tr);
+    s.drawStr(109 - s.getStrWidth(label), 10, label);
+    if (!live) {
+      s.drawLine(115, 4, 122, 11); s.drawLine(115, 11, 122, 4);
+      return;
+    }
+    const int bars = wifiSignalBars(live, rssi);
     for (int i = 0; i < 3; ++i) {
-      if (live) s.drawBox(114 + i * 4, 10 - i * 2, 2, 2 + i * 2);
+      if (i < bars) s.drawBox(114 + i * 4, 10 - i * 2, 2, 2 + i * 2);
       else s.drawPixel(115 + i * 4, 10);
     }
   }
-  void header(const char* label, int page, const char* right, bool live, bool compact) {
+  void header(const char* label, int page, const char* right, bool live, bool compact, int rssi) {
     if (page == 4) {
       s.drawRBox(2, 0, 76, 14, 2); s.setDrawColor(0);
       bell(6, 2); text(19, 11, label); s.setDrawColor(1);
     } else {
       if (page == 3) check(4, 4); else pin(4, 2);
-      clipped(17, 11, right ? 75 : 92, label);
+      clipped(17, 11, right ? 75 : 52, label);
     }
     if (right) {
       s.setFont(u8g2_font_5x7_tr);
       s.drawStr(124 - s.getStrWidth(right), 10, right);
-    } else network(live);
+    } else network(live, rssi);
     s.drawHLine(4, compact ? 13 : 15, 120);
   }
   void footer(int page) {
@@ -170,7 +182,7 @@ class DeskUi {
       if (day.code >= 51) { s.drawPixel(99, 62); s.drawPixel(103, 62); }
     }
   }
-  int draw(const DeskConfig& c, const DeskWeather& w, bool live, bool compact, uint32_t now, time_t epoch) {
+  int draw(const DeskConfig& c, const DeskWeather& w, bool live, bool compact, uint32_t now, time_t epoch, int rssi, int selectedPage = 0, bool showAlarms = true) {
     const time_t local = epoch + c.offset * 60;
     tm parts{}; gmtime_r(&local, &parts);
     const bool ready = epoch >= 1704067200;
@@ -179,15 +191,15 @@ class DeskUi {
       const auto& t = c.todos[i];
       if (!t.text[0] || t.done) continue;
       active[count++] = i;
-      if (ready && t.due && t.due <= epoch && !t.dismissed && (alarm < 0 || t.due < c.todos[alarm].due)) alarm = i;
+      if (showAlarms && ready && t.due && t.due <= epoch && !t.dismissed && (alarm < 0 || t.due < c.todos[alarm].due)) alarm = i;
     }
-    const int page = alarm >= 0 ? 4 : deskPageAt(c, now);
+    const int page = alarm >= 0 ? 4 : selectedPage ? selectedPage : deskPageAt(c, now);
     char line[48], timeLabel[8];
     if (ready) strftime(timeLabel, sizeof(timeLabel), "%H:%M", &parts);
     else snprintf(timeLabel, sizeof(timeLabel), "--:--");
     s.clearBuffer(); s.setDrawColor(1); s.setMaxClipWindow();
     if (page == 1) {
-      header(c.city, page, nullptr, live, compact);
+      header(c.city, page, nullptr, live, compact, rssi);
       s.setFont(compact ? u8g2_font_logisoso16_tn : u8g2_font_logisoso24_tn);
       const int width = s.getStrWidth(timeLabel);
       s.drawStr(compact ? 4 : (96 - width) / 2, compact ? 31 : 44, timeLabel);
@@ -207,7 +219,7 @@ class DeskUi {
         } else text(4, 63, "等待校时");
       }
     } else if (page == 2) {
-      header(c.city, page, timeLabel, live, compact);
+      header(c.city, page, timeLabel, live, compact, rssi);
       if (!compact) footer(page);
       if (!w.valid) {
         if (compact) text(4, 30, live ? "正在获取天气" : "请先连接 Wi-Fi");
@@ -238,7 +250,7 @@ class DeskUi {
     } else {
       const int index = deskRotationAt(c, now, 12000, count);
       snprintf(line, sizeof(line), "%d/%d", count ? index + 1 : 0, count);
-      header(page == 4 ? "到点提醒" : "待办", page, page == 4 ? timeLabel : line, live, compact);
+      header(page == 4 ? "到点提醒" : "待办", page, page == 4 ? timeLabel : line, live, compact, rssi);
       if (!compact) footer(page);
       if (!count) {
         if (compact) { check(4, 22); text(18, 30, "已全部完成"); }

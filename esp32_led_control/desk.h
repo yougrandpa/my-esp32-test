@@ -1,4 +1,5 @@
 #pragma once
+#include <Arduino.h>
 #include <Preferences.h>
 #include <math.h>
 #include <ctype.h>
@@ -6,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "json_buffer.h"
+#include "desk_navigation.h"
 
 constexpr int DESK_TODOS = 6;
 struct DeskTodo { char text[73] = {}; uint32_t due = 0; bool done = false, dismissed = false; };
@@ -38,6 +40,7 @@ struct DeskWeather {
 class Desk {
  public:
   DeskConfig config;
+  DeskNavigation navigation;
   DeskWeather weather;
   Preferences storage;
   bool storageReady = false, displayPresent = false;
@@ -119,7 +122,10 @@ class Desk {
     if (strtok_r(nullptr, " \t", &cursor)) return false;
     DeskConfig next = config;
     uint32_t slot, due, done;
-    if (!strcmp(op, "LOCATION")) {
+    if (!strcmp(op, "NEXT") && !a) {
+      navigation.press(config.page, millis());
+      return true;
+    } else if (!strcmp(op, "LOCATION")) {
       double offset;
       if (!number(a, -90, 90, next.latitude) || !number(b, -180, 180, next.longitude) || !number(c, -720, 840, offset) || floor(offset) != offset || !decode(d, next.city, sizeof(next.city))) return false;
       next.offset = int(offset);
@@ -141,10 +147,14 @@ class Desk {
       next.page = slot;
     } else if (!strcmp(op, "REFRESH") && !a) { ++refresh; return true; }
     else return false;
-    return save(next);
+    if (!save(next)) return false;
+    if (!strcmp(op, "PAGE")) navigation.reset();
+    return true;
   }
   void appendStatus(StatusJsonBuffer& json) const {
-    json.add(",\"desk\":{\"supported\":true,\"display_present\":%s,\"epoch\":%lu,\"offset\":%d,\"page\":%d,\"alarm\":%d,\"city\":", displayPresent ? "true" : "false", (unsigned long)epoch, config.offset, config.page, alarm());
+    const auto v = navigation.view(config.page, millis());
+    const int due = alarm();
+    json.add(",\"desk\":{\"supported\":true,\"display_present\":%s,\"epoch\":%lu,\"offset\":%d,\"page\":%d,\"current_page\":%d,\"button_hold\":%s,\"resume_in_ms\":%lu,\"alarm\":%d,\"city\":", displayPresent ? "true" : "false", (unsigned long)epoch, config.offset, v.automatic ? 0 : v.page, due >= 0 && !v.buttonHold ? 4 : v.page, v.buttonHold ? "true" : "false", (unsigned long)v.resumeIn, due);
     json.string(config.city);
     json.add(",\"latitude\":%.6f,\"longitude\":%.6f,\"weather\":{\"valid\":%s,\"updated\":%lu,\"temperature\":%.1f,\"code\":%d,\"error\":", config.latitude, config.longitude, weather.valid ? "true" : "false", (unsigned long)weather.updated, weather.temperature, weather.code);
     json.string(weather.error);

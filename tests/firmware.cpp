@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <future>
+#include "../esp32_led_control/wifi_signal.h"
 #define DESK_NO_HARDWARE
 #include "../esp32_led_control/esp32_led_control.ino"
 
@@ -23,7 +24,54 @@ void request(const char* path, HTTPMethod method, std::map<std::string, std::str
 }
 
 int main() {
+  // A button takes over from the visible page, then resumes from that position.
+  DeskNavigation pager;
+  assert(pager.view(0, 8000).page == 2);
+  pager.press(0, 8500);
+  assert(pager.view(0, 8500).page == 3 && pager.view(0, 8500).resumeIn == 30000);
+  assert(!pager.view(0, 38499).automatic && pager.view(0, 38499).page == 3);
+  assert(pager.view(0, 38500).automatic && pager.view(0, 38500).page == 3);
+  assert(pager.view(0, 46499).page == 3 && pager.view(0, 46500).page == 1);
+  pager.press(0, 46501);
+  assert(pager.view(0, 46501).page == 2 && pager.view(0, 46501).buttonHold);
+  pager.press(0, 60000);
+  assert(pager.view(0, 89999).buttonHold && pager.view(0, 90000).page == 3);
+  assert(pager.view(0, 90000).automatic && pager.view(0, 98000).page == 1);
+  pager.reset();
+  assert(pager.view(2, 98000).page == 2 && !pager.view(2, 98000).buttonHold);
+  pager.press(2, UINT32_MAX - 100);
+  assert(pager.view(2, uint32_t(UINT32_MAX - 100 + 29999u)).buttonHold);
+  assert(pager.view(2, uint32_t(UINT32_MAX - 100 + 30000u)).automatic);
+  assert(pager.view(2, uint32_t(UINT32_MAX - 100 + 30000u)).page == 3);
+  assert(pager.view(2, uint32_t(UINT32_MAX - 100 + 38000u)).page == 1);
+  DeskButton button;
+  button.begin(false, 0);
+  assert(!button.sample(true, 10) && !button.sample(false, 20));
+  assert(!button.sample(true, 25) && !button.sample(true, 59));
+  assert(button.sample(true, 60));
+  assert(!button.sample(true, 60000)); // Holding never generates repeat presses.
+  assert(!button.sample(false, 60001) && !button.sample(true, 60010));
+  assert(!button.sample(true, 60050)); // A bounced release does not rearm.
+  assert(!button.sample(false, 60060) && !button.sample(false, 60095));
+  assert(!button.sample(true, 60100) && button.sample(true, 60135));
+  button.begin(true, 0); // BOOT held during startup must first be released.
+  assert(!button.sample(true, 1000));
+  assert(!button.sample(false, 1001) && !button.sample(false, 1036));
+  assert(!button.sample(true, 1040) && button.sample(true, 1075));
+  button.begin(false, UINT32_MAX - 100);
+  assert(!button.sample(true, UINT32_MAX - 10) && button.sample(true, 24));
+  assert(wifiSignalBars(true, -30) == 3);
+  assert(wifiSignalBars(true, -60) == 3);
+  assert(wifiSignalBars(true, -61) == 2);
+  assert(wifiSignalBars(true, -75) == 2);
+  assert(wifiSignalBars(true, -76) == 1);
+  assert(wifiSignalBars(true, -127) == 1);
+  assert(wifiSignalBars(false, -30) == 0);
+  assert(wifiSignalBars(true, 0) == 0);
+  assert(wifiSignalBars(true, -128) == 0);
+  assert(wifiSignalBars(true, 1) == 0);
   setup();
+  assert(testInputPin == DESK_BUTTON_PIN);
   assert(effect.mode == MODE_BLINK && testDuty == 255);
   assert(command("BREATHE 3000").find("OK BREATHE 3000\nSTATUS ") == 0);
   assert(effectDuty(effect, 0) == 0);
@@ -402,5 +450,36 @@ int main() {
   }
   publisher.get();
   reportStatus(); assert(Serial.output.find("SCREEN ") != std::string::npos);
-  std::cout << "Firmware: effects, Wi-Fi, HTTP and persistent desk/reminders passed\n";
+  // Exercise the actual main-loop GPIO path without NVS writes on each press.
+  command("DESK PAGE 1");
+  const auto persisted = Preferences::values;
+  testTime = 1000000; testButtonLevel = LOW; loop();
+  testTime += 34; loop();
+  assert(!desk.navigation.buttonOwned);
+  testTime += 1; loop();
+  assert(desk.navigation.view(desk.config.page, testTime).page == 2);
+  assert(desk.navigation.view(desk.config.page, testTime).buttonHold);
+  testTime += 20000; loop();
+  assert(desk.navigation.view(desk.config.page, testTime).page == 2);
+  testButtonLevel = HIGH; loop(); testTime += 35; loop();
+  testButtonLevel = LOW; loop(); testTime += 35; loop();
+  const uint32_t lastPress = testTime;
+  assert(desk.navigation.view(desk.config.page, testTime).page == 3);
+  assert(Preferences::values == persisted);
+  testTime = lastPress + 29999; loop();
+  assert(desk.navigation.view(desk.config.page, testTime).buttonHold);
+  testTime = lastPress + 30000; loop();
+  assert(desk.navigation.view(desk.config.page, testTime).automatic);
+  char navStatus[4096]; assert(formatStatus(navStatus, sizeof(navStatus)));
+  assert(std::string(navStatus).find("\"page\":0,\"current_page\":3,\"button_hold\":false") != std::string::npos);
+  testTime = lastPress + 38000; loop();
+  assert(desk.navigation.view(desk.config.page, testTime).page == 1);
+  assert(command("DESK NEXT").find("OK DESK") == 0);
+  assert(desk.navigation.view(desk.config.page, testTime).page == 2);
+  assert(command("DESK NEXT extra").find("ERR") == 0);
+  Preferences::failWrites = true;
+  assert(command("DESK PAGE 0").find("ERR") == 0 && desk.navigation.buttonOwned);
+  Preferences::failWrites = false;
+  assert(command("DESK PAGE 0").find("OK DESK") == 0 && !desk.navigation.buttonOwned);
+  std::cout << "Firmware: effects, Wi-Fi, HTTP, desk/reminders and BOOT navigation passed\n";
 }

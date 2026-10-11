@@ -10,6 +10,11 @@
 
 #define LED_PIN 2
 #define LED_ACTIVE_LOW false
+#ifndef DESK_BUTTON_PIN
+#define DESK_BUTTON_PIN 0
+#endif
+
+DeskButton deskButton;
 
 Effect effect;
 uint32_t effectStart = 0;
@@ -167,6 +172,8 @@ void setup() {
   applyOutput(millis());
   network.begin();
   desk.begin();
+  pinMode(DESK_BUTTON_PIN, INPUT_PULLUP);
+  deskButton.begin(digitalRead(DESK_BUTTON_PIN) == LOW, millis());
   deskRuntime.begin();
   httpControl.begin();
   Serial.println("ESP32 LED control ready v2 + Wi-Fi HTTP");
@@ -174,6 +181,8 @@ void setup() {
 }
 
 void loop() {
+  const uint32_t now = millis();
+  if (deskButton.sample(digitalRead(DESK_BUTTON_PIN) == LOW, now)) desk.navigation.press(desk.config.page, now);
   handleSerial();
   applyOutput(millis());
   network.tick(millis());

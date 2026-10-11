@@ -30,10 +30,13 @@ class DeskRuntime {
   TaskHandle_t task = nullptr, displayTask = nullptr;
   std::mutex mutex;
   DeskConfig snapshot;
+  DeskPageView pageView;
   DeskWeather result, displayWeather;
   double resultLat = 0, resultLon = 0;
   int resultOffset = 0;
   bool online = false, resultReady = false;
+  int displayRssi = 0;
+  uint32_t lastSignalSample = 0;
   uint32_t requestedRefresh = 0, lastPublish = 0;
   static bool sameLocation(const DeskConfig& a, const DeskConfig& b) {
     return a.latitude == b.latitude && a.longitude == b.longitude && a.offset == b.offset;
@@ -42,6 +45,7 @@ class DeskRuntime {
     screenStore.begin(esp_random());
     configTime(0, 0, "ntp.aliyun.com", "pool.ntp.org", "time.cloudflare.com");
     snapshot = desk.config;
+    pageView = desk.navigation.view(desk.config.page, millis());
     if (xTaskCreate([](void* p) { static_cast<DeskRuntime*>(p)->service(); }, "desk-weather", 14336, this, 1, &task) != pdPASS) {
       task = nullptr;
       snprintf(desk.weather.error, sizeof(desk.weather.error), "task_failed");
@@ -61,12 +65,18 @@ class DeskRuntime {
     desk.displayPresent = screenStore.latest().present;
     const time_t now = time(nullptr);
     desk.epoch = now >= 1704067200 && now <= 4102444799LL ? uint32_t(now) : 0;
-    if (uint32_t(millis() - lastPublish) < 100) return;
+    const auto requestedPage = desk.navigation.view(desk.config.page, millis());
+    if (uint32_t(millis() - lastPublish) < 100 && requestedPage.page == pageView.page && requestedPage.automatic == pageView.automatic && requestedPage.buttonHold == pageView.buttonHold) return;
     lastPublish = millis();
+    const bool connected = network.enabled && WiFi.status() == WL_CONNECTED;
+    const bool sampleSignal = connected != online || uint32_t(lastPublish - lastSignalSample) >= 1000;
+    const int rssi = connected && sampleSignal ? WiFi.RSSI() : 0;
     std::lock_guard<std::mutex> lock(mutex);
     if (!sameLocation(snapshot, desk.config)) desk.weather = DeskWeather{};
     snapshot = desk.config;
-    online = network.enabled && WiFi.status() == WL_CONNECTED;
+    pageView = requestedPage;
+    online = connected;
+    if (sampleSignal) { displayRssi = rssi; lastSignalSample = lastPublish; }
     requestedRefresh = desk.refresh;
     if (resultReady) {
       if (resultLat == snapshot.latitude && resultLon == snapshot.longitude && resultOffset == snapshot.offset) desk.weather = result;
@@ -159,12 +169,12 @@ class DeskRuntime {
     if (present && !displayPresent) screen.begin();
     displayPresent = present;
   }
-  void render(const DeskConfig& c, const DeskWeather& w, bool live) {
+  void render(const DeskConfig& c, const DeskWeather& w, bool live, int rssi, const DeskPageView& v) {
     configureDisplay();
     const uint32_t now = millis();
     const time_t epoch = time(nullptr);
     DeskUi ui(screen);
-    const int page = ui.draw(c, w, live, activeDisplay.model == 1, now, epoch);
+    const int page = ui.draw(c, w, live, activeDisplay.model == 1, v.contentTime, epoch, rssi, v.page, !v.buttonHold);
     probeDisplay(now);
     if (displayPresent) screen.sendBuffer();
     screenStore.publish(activeDisplay, screen.getBufferPtr(), now, page, displayPresent);
@@ -173,9 +183,10 @@ class DeskRuntime {
     Wire.begin(DISPLAY_SDA, DISPLAY_SCL);
     Wire.setTimeOut(25);
     for (;;) {
-      DeskConfig c; DeskWeather w; bool live;
-      { std::lock_guard<std::mutex> lock(mutex); c = snapshot; w = displayWeather; live = online; }
-      render(c, w, live);
+      DeskConfig c; DeskWeather w; DeskPageView v; bool live; int rssi;
+      { std::lock_guard<std::mutex> lock(mutex); c = snapshot; w = displayWeather; v = pageView; live = online; rssi = displayRssi; }
+      c.page = v.automatic ? 0 : v.page;
+      render(c, w, live, rssi, v);
       vTaskDelay(pdMS_TO_TICKS(250));
     }
   }
