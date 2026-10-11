@@ -3,6 +3,7 @@ import { SerialSession } from './serial.mjs';
 import { HttpSession } from './http.mjs';
 import { MAX_FAVORITES, readFavorites, writeFavorites, favoriteId } from './favorites.mjs';
 import { mountDesk } from './desk.mjs';
+import { mountCloud } from './cloud.mjs';
 import { WIFI_STATES, WIFI_ERRORS, wifiConfigCommand, wifiStatus } from './wifi.mjs';
 
 const $ = id => document.getElementById(id);
@@ -11,6 +12,9 @@ const numbers = Object.fromEntries([...document.querySelectorAll('[data-config-k
 const editingNumbers = new Set();
 const MODE_CODES = { blink: 'BLINK', breathe: 'BREATHE', sos: 'MORSE / SOS', on: 'STEADY ON', off: 'LIGHT OFF' };
 const httpMode = globalThis.ESP32_DEVICE === true;
+const serverMode = globalThis.ESP32_SERVER === true;
+const cloudMode = globalThis.ESP32_CLOUD === true;
+const connectionName = serverMode ? '服务器' : 'Wi-Fi';
 const supported = httpMode || 'serial' in navigator;
 let config = { ...DEFAULTS };
 let session = null, connected = false, connecting = false, closing = false;
@@ -23,6 +27,7 @@ let networkStatus = null, wifiBusy = false;
 let wifiScanning = false, wifiScanTimer = null, nearbyNetworks = [];
 
 const deskUi = mountDesk({ getSession: () => session, isReady: () => connected && fresh() && !closing });
+const cloudUi = mountCloud({ getSession: () => session, isReady: () => connected && fresh() && !closing, usb: !httpMode });
 
 function receiveScan(result, owner) {
   if (session !== owner || !wifiScanning) return;
@@ -169,16 +174,18 @@ function renderControls() {
 function renderSync() {
   renderWifi();
   deskUi.connection();
+  cloudUi.connection();
   const waiting = pending();
   const synced = connected && fresh();
   document.documentElement.dataset.connection = connecting ? 'connecting' : !connected ? 'offline' : synced ? 'live' : 'stale';
   $('previewBadge').textContent = connecting ? '等待设备' : !connected ? '离线预览' : synced ? '设备预览' : '回报过期';
   $('dot').classList.toggle('on', connected);
-  $('status').textContent = closing ? '正在断开…' : connecting ? '正在连接并读取状态…' : connected ? httpMode ? `已连接 · Wi-Fi · ${location.host}` : '已连接 · USB 串口' : supported ? '未连接' : '浏览器不支持 Web Serial';
+  $('status').textContent = closing ? '正在断开…' : connecting ? '正在连接并读取状态…' : connected ? httpMode ? `已连接 · ${connectionName} · ${location.host}` : '已连接 · USB 串口' : supported ? '未连接' : '浏览器不支持 Web Serial';
   const syncText = connecting ? '等待设备状态…' : !connected ? '离线 · 可预览和收藏' : operationError ? `未完成：${operationError}` : waiting ? '命令发送中 · 等待设备确认…' : synced ? httpMode ? '已确认 · 每秒同步设备状态' : '已确认 · 设备每秒回报' : '状态超时 · 请读取状态或重新连接';
   if ($('syncStatus').textContent !== syncText) $('syncStatus').textContent = syncText;
   $('syncStatus').classList.toggle('confirmed', synced && !waiting && !operationError);
   $('btnConnect').disabled = !supported || !!session || connecting || closing;
+  $('connectionError').textContent = operationError;
   $('btnDisconnect').disabled = !session || connecting || closing;
   $('btnRefresh').disabled = !connected || waiting || closing;
   $('btnSaveFavorite').disabled = connecting || closing || (!!session && (!synced || waiting || !!operationError));
@@ -195,7 +202,9 @@ function receiveStatus(status, owner) {
   if (!confirmed) return;
   device = { ...confirmed, elapsedMs: status.elapsed_ms, duty: status.led_duty };
   networkStatus = wifiStatus(status.wifi);
-  lastStatusAt = performance.now();
+  const ageMs = cloudMode && Number.isFinite(status.cloud?.age_ms) ? Math.max(0, status.cloud.age_ms) : 0;
+  lastStatusAt = performance.now() - ageMs;
+  cloudUi.accept(status.cloud, owner);
   deskUi.accept(status.desk, owner, { display: status.display, uptimeMs: status.uptime_ms, online: networkStatus?.state === 'connected' });
   // Use only the cycle phase, so long uptimes do not reduce preview precision.
   previewAnchor = lastStatusAt - status.elapsed_ms % cycleMs(confirmed);
@@ -225,12 +234,13 @@ async function connect() {
       onLog: log,
       onLost: error => {
         if (session === owner) {
+          operationError = error.message;
           log('err', error.message);
           void disconnect();
         }
       },
     };
-    owner = httpMode ? new HttpSession(location.origin, options) : new SerialSession(port, options);
+    owner = httpMode ? new HttpSession(location.origin, { ...options, timeoutMs: cloudMode ? 6500 : 2500 }) : new SerialSession(port, options);
     session = owner;
     device = null;
     networkStatus = null;
@@ -247,7 +257,7 @@ async function connect() {
     log('sys', '已读取设备状态。控件现在反映板子实际设定。');
   } catch (error) {
     if (error.name === 'NotFoundError') log('sys', '已取消串口选择。');
-    else log('err', `连接失败：${error.message}`);
+    else { operationError = error.message; log('err', `连接失败：${error.message}`); }
     if (owner && session === owner) await disconnect();
   } finally {
     connecting = false;
@@ -538,17 +548,20 @@ if (!httpMode && supported) navigator.serial.addEventListener('disconnect', even
 });
 
 if (httpMode) {
-  document.querySelector('.local-tag').textContent = 'Wi-Fi 局域网控制';
-  $('btnConnect').lastChild.textContent = '连接 Wi-Fi';
+  document.querySelector('.local-tag').textContent = serverMode ? '手机 / 服务器控制' : 'Wi-Fi 局域网控制';
+  $('btnConnect').lastChild.textContent = serverMode ? '连接设备' : '连接 Wi-Fi';
   $('connectionIcon').setAttribute('href', '#icon-wifi');
   $('connectIcon').setAttribute('href', '#icon-wifi');
   $('logHeading').textContent = '操作日志';
   $('log').setAttribute('aria-label', '操作日志内容');
   $('wifiHeading').textContent = 'Wi-Fi 连接';
   $('wifiProvisioning').hidden = true;
-  $('wifiHelp').textContent = '通过当前 Wi-Fi 测试灯效和查看状态。首次配网、更换网络及固件烧录使用 USB。';
-  $('deviceDetail').textContent = '正在通过 Wi-Fi 读取设备状态。';
-  document.querySelector('.footer-spec').textContent = 'ESP32 · WI-FI · HTTP';
+  $('wifiHelp').textContent = serverMode ? '此处显示 ESP32 的实际网络状态。手机通过服务器修改灯效、屏幕、天气位置和待办；首次配网、更换网络及固件烧录使用 USB。' : '通过当前 Wi-Fi 修改灯效、屏幕、天气位置和待办。首次配网、更换网络及固件烧录使用 USB。';
+  $('deviceDetail').textContent = `正在通过${connectionName}读取设备状态。`;
+  $('connectionHelp').textContent = cloudMode ? '手机已打开服务器网页。ESP32 需先保存服务器地址和设备密钥，联网后主动接入；显示「已连接」才可以控制设备。' : serverMode ? '手机已打开服务器网页。当前为局域网代理模式，服务器必须能访问 ESP32 的 IP；显示「已连接」才可以控制设备。' : '手机与 ESP32 连接同一 Wi-Fi，打开当前地址即可控制。操作由设备确认后同步。';
+  document.querySelector('.footer-spec').textContent = serverMode ? 'ESP32 · SERVER · HTTP' : 'ESP32 · WI-FI · HTTP';
+} else if (!supported) {
+  $('connectionHelp').textContent = '手机请连接同一 Wi-Fi 并访问 http://ESP32的IP/，或访问已配置的服务器地址。首次配网使用电脑 USB 串口。';
 }
 
 try { favorites = readFavorites(localStorage); }
@@ -556,5 +569,5 @@ catch (_) { $('favoriteNotice').textContent = '无法读取收藏：本地存储
 renderFavorites();
 requestAnimationFrame(animate);
 setInterval(renderSync, 500);
-log('sys', httpMode ? 'Wi-Fi 工作台就绪，正在连接设备。' : supported ? '就绪。离线可预览；连接串口后读取设备状态。' : '请用 Chrome 或 Edge 连接设备；当前仍可预览和收藏。');
+log('sys', httpMode ? `${connectionName}工作台就绪，正在连接设备。` : supported ? '就绪。离线可预览；连接串口后读取设备状态。' : '手机请访问 ESP32 或服务器地址；当前页面可离线预览和收藏。');
 if (httpMode) void connect();

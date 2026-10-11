@@ -1,6 +1,6 @@
 # ESP32 LED 控制器
 
-通过浏览器，经 USB 串口或 Wi-Fi 局域网控制 ESP32 的 LED，支持常亮、熄灭、闪烁、真正的 PWM 呼吸灯和标准 SOS，可收藏灯效、读取设备状态；可外接 OLED 显示时间、当地三天天气、待办和定时提醒。首次 Wi-Fi 配网使用 USB；联网后可直接访问板子的网页。网页无前端依赖，无需安装 Node.js（运行开发测试时需要）。
+通过浏览器，经 USB 串口、Wi-Fi 局域网或独立服务器控制 ESP32 的 LED，支持常亮、熄灭、闪烁、真正的 PWM 呼吸灯和标准 SOS，可收藏灯效、读取设备状态；可外接 OLED 显示时间、当地三天天气、待办和定时提醒。首次 Wi-Fi 配网使用 USB；联网后手机可直接访问板子，也可访问服务器工作台。网页无前端依赖；USB / 板子直连不需要 Node.js，独立服务器推荐 Node.js 22 LTS。
 
 ## 硬件和环境
 
@@ -81,6 +81,93 @@ HTTP 收发在独立 FreeRTOS 任务中运行，灯效、串口及网络配置�
 - **清除网络配置**：关闭 Wi-Fi 并删除保存的名称与密码，重启后也不再自动连接。
 
 密码不回传、不记录到网页日志或 localStorage，提交后清空输入框。串口使用十六进制编码传输凭据，以兼容空格和中文；编码不是加密，NVS 配置也未加密。配网需 USB 连接，不会自动读取电脑的 Wi-Fi 密码。
+
+## 手机访问与服务器部署
+
+手机支持 Safari、Chrome、Edge 等现代浏览器，无需 Web Serial。可以修改 LED 模式、亮度和时间参数、OLED 型号和页面、天气位置、待办及提醒，也可以用手机时间校时。页面显示 ESP32 回传的状态和像素帧，命令确认后同步；断开连接后调节灯效只做离线预览。
+
+### 方式一：直接访问 ESP32
+
+先通过电脑 USB 配网，让手机与 ESP32 接入同一 Wi-Fi，然后在手机打开 `http://ESP32的IP/`。IP 可在电脑工作台的「Wi-Fi 配网」中查看。这个方式不需要电脑保持开启；首次配网、更换 Wi-Fi 和烧录固件仍使用电脑 USB。
+
+### 方式二：ESP32 主动接入服务器（推荐，支持后续公网部署）
+
+Wi-Fi 联网只代表 ESP32 有网络；还需要保存 **服务器地址和设备密钥**，才能知道向哪个服务器上报、接收谁的指令。此模式的链路为：**ESP32 主动接入服务器 ↔ 服务器 ↔ 手机网页**。服务器不需要知道 ESP32 的局域网 IP，手机与设备也不必处于同一 Wi-Fi。
+
+1. 执行 `make upload` 升级固件，保留原有 Wi-Fi、待办和显示器设置。
+2. 将 `.env.example` 复制为 `.env`，设置 `CONTROL_MODE=cloud`、`ESP32_ACCESS_TOKEN`（网页登录密码）和 `ESP32_DEVICE_TOKEN`（设备接入密钥）。两者分别使用自己的随机值，设备密钥可用 `openssl rand -hex 24` 生成。
+3. 执行 `node --env-file=.env server/server.mjs` 启动服务器，或使用下方 Docker 配置。
+4. 执行 `make serve`，电脑访问 USB 工作台并连接串口。在「服务器接入」填写设备能访问的服务器地址和相同的 `ESP32_DEVICE_TOKEN`，点击「保存并接入」。本机测试填写 `http://电脑局域网IP:8000`（如 `http://172.20.10.2:8000`），不能填写 `localhost` / `127.0.0.1`，它们对 ESP32 指向板子自身。云端使用 `https://你的域名`。
+5. 等待「Wi-Fi 配网」显示已联网，并且「服务器接入」显示 **ESP32 已接入服务器**，手机打开服务器地址，以用户名 `esp32` 和 `ESP32_ACCESS_TOKEN` 登录，即可修改数据和屏幕内容。
+
+设备接入配置保存于独立 NVS `led-cloud`；重启自动接入。后台任务正常每秒上报一次完整设备状态与 OLED 像素帧，并领取一条命令；执行结果会立即进入下一次上报。灯效和配置执行仍在主循环，网络请求不会阻塞 PWM / 按键 / USB。接入失败约每 3 秒自动重试，服务器 6.5 秒未收到上报将视为离线；网页 3.5 秒没有新设备数据时暂停预览和配置。
+
+服务器等待设备确认最多 4.5 秒，过期命令从队列删除，不会在设备日后上线时突然执行。每条命令有唯一 ID，设备缓存最近一次执行结果，响应丢失时重复领取不会重复执行；设备重启会取消服务器尚未确认的命令。单服务器实例管理一个配对设备，尚未提供多设备列表或跨实例队列，部署时运行一个实例。服务器重启后等待设备重新上报，内存中未确认命令会丢弃。
+
+设备 HTTPS 使用现有 ISRG Root X1 / X2 根证书，适用于 Let's Encrypt 签发的站点；自签证书或其他证书链需更新 `weather_ca.h`，不能直接使用。设备需要先完成 NTP 或浏览器校时才能验证 HTTPS。电脑局域网测试可用 HTTP；公网请使用 HTTPS。设备密钥不回传、不写入网页日志或 localStorage，NVS 中为明文，串口配对需可信 USB 连接。
+
+USB 接入命令：`CLOUD SET <服务器根地址> <设备密钥>`、`CLOUD CONNECT`、`CLOUD OFF`、`CLOUD CLEAR`。服务器地址最多 128 个 ASCII 字符，支持 IPv4 / 域名和可选端口，不含路径；密钥为 16–64 位英文、数字、下划线或短横线。`OFF` 只关闭本次运行的通道并保留配置，重启恢复；`CLEAR` 删除接入配置，不改变 Wi-Fi / 待办。HTTP / 云端不允许远程修改这些接入凭据。
+
+### 方式三：服务器直接访问 ESP32（局域网代理）
+
+`server/server.mjs` 也保留局域网代理，使用 Node.js 内置模块，无需 `npm install`。链路为：**手机 → 网页服务器 → ESP32 HTTP 接口**。此模式要求服务器能访问 ESP32 的实际 IP，仅填写 `ESP32_URL` 的示例地址不会生效。
+
+先完成 ESP32 的 Wi-Fi 配网；在能访问 ESP32 的电脑上运行（替换 IP 和密码）：
+
+```sh
+ESP32_URL=http://192.168.1.50 \
+CONTROL_MODE=proxy \
+ESP32_ACCESS_TOKEN='替换成至少16字符的独立访问密码' \
+make server HOST=0.0.0.0
+```
+
+手机连接同一网络，打开 `http://电脑的局域网IP:8000/`。浏览器会弹出登录框：用户名 **esp32**，密码为 `ESP32_ACCESS_TOKEN`，它与 Wi-Fi 密码无关。允许系统防火墙的入站连接。页面自动读取设备状态，修改控件即可下发命令；断线后点击「连接服务器」重新连接。服务必须持续运行，关闭终端后此入口停止。
+
+只在本机调试可以使用 `ESP32_URL=http://192.168.1.50 make server`，默认绑定 `127.0.0.1`。原来的 `make serve` 继续提供 USB 网页，不具备设备代理功能；单纯把 HTML 放到静态网站也不能远程控制 ESP32。
+
+| 配置 | 用途 |
+| --- | --- |
+| `CONTROL_MODE` | `cloud`：设备主动接入；`proxy`：服务器访问设备 IP。`.env.example` / Docker 默认 cloud；未指定环境变量的原生服务沿用 proxy |
+| `ESP32_DEVICE_TOKEN` | cloud 必填，16–64 位设备密钥，与 USB「服务器接入」填写值一致 |
+| `ESP32_URL` | 仅 proxy 必填，服务器能访问的设备 HTTP(S) 根地址；不接受路径、账号密码或查询参数 |
+| `HOST` | 原生 Node 服务监听地址，默认 `127.0.0.1`；手机访问设为 `0.0.0.0` |
+| `PORT` | 原生 Node 服务端口，默认 8000；Make 使用 `HTTP_PORT` 覆盖 |
+| `ESP32_ACCESS_TOKEN` | 至少 16 字符的访问密码；绑定外部网络时必填；网页登录用户名固定为 `esp32` |
+| `PUBLIC_ORIGIN` | HTTPS 反向代理下填写浏览器访问的完整根地址，如 `https://esp32.example.com`，用于校验写入请求来源 |
+| `GATEWAY_BIND` | 仅用于 Docker 主机端口，默认 `127.0.0.1`；局域网手机访问改为 `0.0.0.0` |
+
+也可复制 `.env.example` 为 `.env`，选择模式并填写对应密钥 / 地址，然后用 Node.js 22 启动：
+
+```sh
+cp .env.example .env
+# 编辑 .env；可用 openssl rand -hex 24 生成访问密码
+node --env-file=.env server/server.mjs
+```
+
+### Docker 与后续公网部署
+
+准备好 `.env` 后启动：
+
+```sh
+docker compose up -d --build
+docker compose logs -f
+```
+
+容器默认只向主机 `127.0.0.1:8000` 开放，适合接入同一主机上的 Nginx / Caddy HTTPS 反向代理。局域网直接用手机测试时，在 `.env` 里设置 `GATEWAY_BIND=0.0.0.0`。公网部署应启用 HTTPS，并设置 `PUBLIC_ORIGIN`；访问密码通过 HTTP Basic 登录提交，公网需要 HTTPS 保护传输。
+
+例如同一台服务器上 Caddy 的站点配置（域名需指向服务器）：
+
+```caddyfile
+esp32.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+对应 `.env` 设置 `PUBLIC_ORIGIN=https://esp32.example.com`。修改环境变量后执行 `docker compose up -d` 使其生效。`GET /healthz` 返回进程健康状态，不代表 ESP32 已在线；页面的设备反馈才表示设备实际连接结果。
+
+**网络前提**：cloud 模式只要求 ESP32 能向外访问配置的服务器地址，无需给 ESP32 开放入站端口；公网服务器请使用 cloud。proxy 模式仍需服务器通过局域网 / VPN 访问 ESP32 私有 IP。请勿把 ESP32 的无密码 HTTP 端口直接映射到公网。
+
+浏览器统一使用 `/api/status`、`/api/screen` 和 `/api/command`，cloud 模式从设备上报缓存读取并等待设备执行确认，proxy 模式转发到固定地址。设备上报通过独立的 `POST /api/device/sync` 与 Bearer 设备密钥鉴权；网页的 Basic 密码不能用于设备配对。Wi-Fi 和服务器接入配置继续限制为 USB。多个手机的写入请求按队列执行，不自动重发；proxy 读取请求合并，默认请求预算为 1.8 秒。写入超时可能已经生效，应重新连接读取状态后再决定操作。多用户修改以设备最后接受的命令为准；灯效收藏仍按各浏览器分别保存。
 
 ## OLED 桌面信息屏
 
@@ -196,22 +283,29 @@ STATUS {"version":2,"mode":"breathe","brightness":128,"on_ms":500,"off_ms":500,"
 esp32_led_control/esp32_led_control.ino  Arduino 固件
 esp32_led_control/effects.h            非阻塞灯效计算
 esp32_led_control/network.h            Wi-Fi 配网、NVS 保存和连接重试
+esp32_led_control/cloud_control.h      ESP32 主动上报、命令领取、去重及接入配置
 esp32_led_control/desk.h               位置、待办、提醒及 NVS 保存
 esp32_led_control/desk_runtime.h       多型号 OLED 驱动、NTP 与天气后台任务
 esp32_led_control/desk_ui.h            单色屏排版、天气图标、紧凑布局与长正文翻页
 esp32_led_control/desk_navigation.h    BOOT 防抖、30 秒暂停与从当前页恢复轮播
 esp32_led_control/screen.h             屏幕配置持久化、原子帧快照与协议
 esp32_led_control/weather_ca.h         天气 HTTPS 根证书
-esp32_led_control.html                 Web Serial 控制页面
+esp32_led_control.html                 USB / Wi-Fi / 服务器共享控制页面
 web/app.mjs                           页面交互、设备状态和预览
 web/styles.css                        桌面工作台与响应式样式
 web/effects.mjs                        浏览器灯效计算和协议校验
 web/serial.mjs                         串口队列、确认、超时和断线处理
+web/http.mjs                           Wi-Fi / 服务器的同源 HTTP 会话
 web/favorites.mjs                      收藏持久化
 web/desk.mjs                           信息屏配置、城市搜索及待办交互
 web/screen.mjs                         型号注册、帧校验和真实像素解码
 web/wifi.mjs                           配网校验、编码、状态与日志脱敏
-tests/                               主机侧固件及网页模块测试
+web/cloud.mjs                          服务器接入配置和实际连接状态
+server/server.mjs                      网页服务、鉴权及单设备 HTTP 代理
+server/device-bridge.mjs               设备上报、状态缓存、命令有效期和确认队列
+Dockerfile / compose.yaml              容器部署与健康检查
+.env.example                           服务器环境变量示例
+tests/                                主机侧固件、网页模块及服务器集成测试
 platformio.ini                         ESP32 DevKit 构建配置
 requirements-dev.txt                   PlatformIO 版本
 Makefile                               安装、构建、烧录和网页启动命令
@@ -226,7 +320,7 @@ make test   # Node.js 18+ 和支持 C++17 的编译器；不需要连接板子
 make build  # 使用 ESP32 工具链编译实际固件
 ```
 
-测试覆盖呼吸曲线、完整 SOS 间隔及重复、亮度为零、参数校验、毫秒计数回绕、串口分包 / 命令队列 / 错误 / 超时 / 断线、收藏持久化及损坏数据，以及 Wi-Fi 凭据编码与日志脱敏、NVS 写入失败、重启加载、断线重试、关闭与清除配置、异步扫描、空列表、扫描超时、信号排序与去重、长扫描列表分包。主机测试使用 Wi-Fi / NVS 替身，不替代实物连接：烧录后确认 LED 灯效和串口回报，扫描附近网络，再配置真实网络，检查获取 IP、重启自动联网与断网后的重连。
+测试覆盖呼吸曲线、完整 SOS 间隔及重复、亮度为零、参数校验、毫秒计数回绕、串口分包 / 命令队列 / 错误 / 超时 / 断线、收藏持久化及损坏数据，以及 Wi-Fi 凭据编码与日志脱敏、NVS 写入失败、重启加载、断线重试、关闭与清除配置、异步扫描、空列表、扫描超时、信号排序与去重、长扫描列表分包。服务器集成测试使用真实本地 HTTP 服务模拟设备，覆盖网页登录鉴权、文件访问范围、跨站拒绝、凭据隔离、命令转发、现有浏览器会话兼容、超时与畸形回复、多手机队列和读写顺序。主机测试使用 Wi-Fi / NVS 替身，不替代实物连接：烧录后确认 LED 灯效和串口回报，扫描附近网络，再配置真实网络，检查获取 IP、重启自动联网与断网后的重连。
 
 显示器相关测试还覆盖中文 / UTF-8 字节上限、参数及畸形 UTF-8 拒绝、NVS 保存失败、重启恢复、Wi-Fi 与待办存储隔离、到期优先级与确认 / 完成 / 重新打开、离线未校时处理、完整状态缓冲上限、USB / HTTP 配置，以及设备时区与浏览器时区不同的提醒换算。屏幕框架测试覆盖型号和地址验证、独立持久化、并发完整帧快照、纵向位映射、画布原始像素、校验失败、乱序与序号回绕、重启标识、USB 分包及 HTTP 像素帧传输。已用 ESP32 回传帧逐像素比对网页画布；实体 OLED 的接线、型号和面板输出仍需实物验收。
 

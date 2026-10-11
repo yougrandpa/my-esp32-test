@@ -47,6 +47,9 @@
     </div>
   </section>
 
+  <p class="connection-help" id="connectionHelp">USB 用于首次配网；手机可访问 ESP32 的 Wi-Fi 地址或服务器工作台。</p>
+  <p class="connection-error" id="connectionError" role="status"></p>
+
   <main class="workbench">
     <section class="panel control-panel" aria-labelledby="controlHeading">
       <div class="panel-heading"><div><span class="section-index">01</span><h2 id="controlHeading">调节灯效</h2></div><span class="panel-kicker">MAKE IT GLOW</span></div>
@@ -150,6 +153,20 @@
     </div>
   </section>
 
+  <section class="panel wifi-panel" aria-labelledby="cloudHeading">
+    <div class="panel-heading"><div><span class="section-index">LINK</span><h2 id="cloudHeading">服务器接入</h2></div><span class="sync" id="cloudState" role="status">等待设备状态</span></div>
+    <div class="wifi-content">
+      <dl class="telemetry cloud-telemetry"><div><dt>设备连接的服务器</dt><dd id="cloudEndpoint">—</dd></div></dl>
+      <p class="wifi-error" id="cloudError" role="status"></p>
+      <div id="cloudProvisioning">
+        <form id="cloudForm" class="wifi-form"><div><label for="cloudUrl">服务器地址</label><input id="cloudUrl" type="text" placeholder="http://电脑局域网IP:8000 或 https://域名" autocomplete="off" required disabled/></div><div><label for="cloudToken">设备密钥</label><input id="cloudToken" type="password" placeholder="与 ESP32_DEVICE_TOKEN 一致" autocomplete="off" required disabled/></div><button type="submit" class="primary" disabled>保存并接入</button></form>
+        <div class="wifi-actions"><button id="cloudConnect" type="button" disabled>重新接入</button><button id="cloudOff" type="button" disabled>关闭通道</button><button id="cloudClear" type="button" disabled>清除接入配置</button></div>
+      </div>
+      <p class="parameter-note">Wi-Fi 联网后，ESP32 还需要知道服务器地址和设备密钥，才能主动上报数据并接收控制。首次通过电脑 USB 保存，后续开机自动接入；设备密钥与网页登录密码分开。</p>
+      <p class="notice" id="cloudNotice" role="status"></p>
+    </div>
+  </section>
+
   <section class="panel desk-panel" aria-labelledby="deskHeading">
     <div class="panel-heading"><div><span class="section-index">DESK</span><h2 id="deskHeading">桌面信息屏</h2></div><span class="sync" id="deskState" role="status">连接设备后配置</span></div>
     <div class="desk-layout">
@@ -208,6 +225,7 @@
     <li>连接和重连会读取板子当前设定。设备每秒回报状态，预览按设备时间相位模拟；PWM 数值是固件输出回报，实际灯光以板子为准。</li>
     <li>未连接时可预览和收藏，连接后点击收藏即可应用。收藏保存在当前浏览器，清理网站数据会删除收藏。</li>
     <li>首次配网使用 USB。联网后让手机或电脑连接同一网络，访问板子的 <code>http://IP地址/</code> 即可无线控制灯效、查看状态和本页操作日志。Wi-Fi 页面自动连接，不需要启动电脑上的网页服务器；烧录和更换网络继续使用 USB。</li>
+    <li>服务器工作台支持手机 Safari、Chrome 等浏览器。登录用户名为 <code>esp32</code>，密码由服务器配置；可控制灯效、屏幕页面、天气位置、待办与提醒。服务器必须能访问 ESP32，详情见项目 README 的「手机访问与服务器部署」。</li>
     <li>如果收到 <code>ERR unknown command: STATUS</code>，需要先烧录 v2 固件。板载 LED 引脚或有效电平不同，可调整固件中的 <code>LED_PIN</code> / <code>LED_ACTIVE_LOW</code>。</li>
   </ol></div></details>
 </div>

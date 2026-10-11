@@ -55,6 +55,12 @@ h1 { font-size: 27px; line-height: 1.2; letter-spacing: -.04em; margin: 0; font-
 .dot.on { background: var(--accent); box-shadow: 0 0 8px #c8ef8950; }
 .connection-actions { display: flex; align-items: center; gap: 8px; }
 .action-divider { height: 22px; width: 1px; background: var(--line); margin: 0 8px; }
+.connection-help { margin: -7px 2px 18px; color: var(--muted); font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.connection-status { overflow-wrap: anywhere; }
+.connection-info > div:last-child { min-width: 0; }
+.connection-error { margin: -6px 2px 18px; color: var(--err); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.connection-error:empty { display: none; }
+.cloud-telemetry { grid-template-columns: minmax(0, 1fr); }
 .workbench, .utility-grid { display: grid; grid-template-columns: minmax(0, 1.06fr) minmax(0, 1fr); gap: 18px; }
 .panel { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 52px; padding: 15px 22px; border-bottom: 1px solid var(--line-soft); }
@@ -284,3 +290,18 @@ code { padding: 2px 5px; color: var(--amber); background: #242c20; border: 1px s
 #screenSignal { width: 5px; height: 5px; border-radius: 50%; background: #46534f; }
 #screenSignal.live { background: #b5eaf3; box-shadow: 0 0 7px #b5eaf399; }
 @media (max-width: 420px) { .desk-display-form { grid-template-columns: minmax(0, 1fr) 85px; }.desk-display-form button { grid-column: 1 / -1; } }
+@media (max-width: 560px) {
+  /* Prevent iOS input zoom and give frequently used actions a touch target. */
+  input[type="text"], input[type="password"], input[type="number"],
+  .number-field input, .wifi-form input, .save-form input,
+  .desk-panel input[type="number"], .desk-panel input[type="datetime-local"], .desk-panel select { font-size: 16px; }
+  .number-field input { width: 58px; }
+  .brightness-value input { width: 35px; }
+  .connection-actions button, .wifi-actions button, .desk-city-entry button,
+  .desk-todo button, .desk-due-row button, .desk-display-form button { min-height: 44px; }
+  .desk-todo button { min-width: 44px; }
+}
+@media (max-width: 360px) {
+  .parameter-grid { grid-template-columns: 1fr; }
+  .panel-kicker { display: none; }
+}

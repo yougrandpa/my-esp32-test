@@ -58,11 +58,11 @@ export class HttpSession {
         if (response.status < 500) throw new CommandError(message);
         throw new Error(message);
       }
-      if (this.closed) throw new Error('Wi-Fi 会话已断开');
+      if (this.closed) throw new Error('设备会话已断开');
       return value;
     } catch (error) {
       if (error instanceof CommandError) throw error;
-      const failure = new Error(this.closed ? 'Wi-Fi 会话已断开' : timedOut ? 'Wi-Fi 设备响应超时，请检查网络或重新连接' : `Wi-Fi 请求失败：${error.message}`);
+      const failure = new Error(this.closed ? '设备会话已断开' : timedOut ? '设备响应超时，请检查网络或重新连接' : `设备请求失败：${error.message}`);
       throw failure;
     } finally {
       clearTimeout(timer);
@@ -75,8 +75,8 @@ export class HttpSession {
     this.onStatus(value);
   }
   async transact(command, log) {
-    if (this.closed || this.failed) throw new Error('Wi-Fi 会话已断开');
-    if (/^\s*WIFI\b/i.test(command)) throw new CommandError('网络配置请通过 USB 串口操作');
+    if (this.closed || this.failed) throw new Error('设备会话已断开');
+    if (/^\s*(WIFI|CLOUD)\b/i.test(command)) throw new CommandError('网络与服务器配置请通过 USB 串口操作');
     if (log) this.onLog('tx', command);
     try {
       if (command === 'STATUS') {

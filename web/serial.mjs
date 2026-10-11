@@ -24,7 +24,7 @@ export class SerialSession {
   async transact(command) {
     if (this.closed || this.failed) throw new Error('串口已断开');
     const response = new Promise((resolve, reject) => {
-      this.pending = { resolve, reject, expected: command === 'STATUS' ? 'STATUS' : command === 'PING' ? 'PONG' : command.startsWith('DESK ') ? 'OK DESK' : command.startsWith('WIFI SET ') ? 'OK WIFI SET' : `OK ${command}`, timer: setTimeout(() => this.fail(new Error('设备响应超时，请检查固件或重新连接')), this.timeoutMs) };
+      this.pending = { resolve, reject, expected: command === 'STATUS' ? 'STATUS' : command === 'PING' ? 'PONG' : command.startsWith('DESK ') ? 'OK DESK' : command.startsWith('CLOUD SET ') ? 'OK CLOUD SET' : command.startsWith('WIFI SET ') ? 'OK WIFI SET' : `OK ${command}`, timer: setTimeout(() => this.fail(new Error('设备响应超时，请检查固件或重新连接')), this.timeoutMs) };
     });
     // Install the rejection handler before an asynchronous write can fail.
     const handled = response.then(value => ({ value }), error => ({ error }));

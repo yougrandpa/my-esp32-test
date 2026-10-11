@@ -15,7 +15,7 @@ export function wifiStatus(value) {
 }
 
 export function safeSerialText(text) {
-  return text.replace(/\bWIFI\s+SET\b[^\r\n]*/gi, 'WIFI SET [凭据已隐藏]');
+  return text.replace(/\b(WIFI|CLOUD)\s+SET\b[^\r\n]*/gi, (_, kind) => `${kind.toUpperCase()} SET [凭据已隐藏]`);
 }
 
 export function wifiScanResult(value) {

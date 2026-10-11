@@ -1,0 +1,7 @@
+*
+!server/
+!server/*.mjs
+!web/
+!web/*.mjs
+!web/styles.css
+!esp32_led_control.html

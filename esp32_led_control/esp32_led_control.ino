@@ -7,6 +7,7 @@
 #include "effects.h"
 #include "network.h"
 #include "desk_runtime.h"
+#include "cloud_control.h"
 
 #define LED_PIN 2
 #define LED_ACTIVE_LOW false
@@ -43,6 +44,7 @@ bool formatStatus(char* output, size_t capacity) {
   network.appendStatus(json);
   desk.appendStatus(json);
   screenStore.appendStatus(json);
+  cloudControl.appendStatus(json);
   json.add("}");
   return json.valid;
 }
@@ -132,6 +134,11 @@ void processCommand(char* line) {
     reportStatus();
     return;
   }
+  if (!strcmp(command, "CLOUD")) {
+    if (!cloudControl.command(cursor)) Serial.println("ERR invalid cloud configuration or storage failure");
+    reportStatus();
+    return;
+  }
   char reply[64];
   if (!executeControlCommand(line, reply, sizeof(reply))) { Serial.println("ERR invalid command or arguments"); return; }
   if (strcmp(reply, "STATUS")) Serial.println(reply);
@@ -176,6 +183,7 @@ void setup() {
   deskButton.begin(digitalRead(DESK_BUTTON_PIN) == LOW, millis());
   deskRuntime.begin();
   httpControl.begin();
+  cloudControl.begin();
   Serial.println("ESP32 LED control ready v2 + Wi-Fi HTTP");
   reportStatus();
 }
@@ -187,6 +195,7 @@ void loop() {
   applyOutput(millis());
   network.tick(millis());
   deskRuntime.tick();
+  cloudControl.tick();
   httpControl.tick();
   if (uint32_t(millis() - lastReport) >= 1000) reportStatus();
   delay(1);

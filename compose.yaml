@@ -1,0 +1,18 @@
+services:
+  controller:
+    build: .
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      CONTROL_MODE: ${CONTROL_MODE:-cloud}
+      ESP32_URL: ${ESP32_URL:-}
+      ESP32_DEVICE_TOKEN: ${ESP32_DEVICE_TOKEN:-}
+      ESP32_ACCESS_TOKEN: ${ESP32_ACCESS_TOKEN:?Set ESP32_ACCESS_TOKEN in .env}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+    ports:
+      - "${GATEWAY_BIND:-127.0.0.1}:${PORT:-8000}:8000"

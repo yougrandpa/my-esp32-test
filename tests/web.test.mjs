@@ -5,8 +5,23 @@ import { FAVORITES_KEY, readFavorites, writeFavorites, favoriteId } from '../web
 import { SerialSession } from '../web/serial.mjs';
 import { HttpSession } from '../web/http.mjs';
 import { wifiConfigCommand, wifiStatus, wifiScanResult } from '../web/wifi.mjs';
+import { cloudConfigCommand } from '../web/cloud.mjs';
 
 const status = { version: 2, mode: 'blink', brightness: 255, on_ms: 500, off_ms: 500, breathe_ms: 3000, sos_unit_ms: 150, elapsed_ms: 0, uptime_ms: 0, led_duty: 255, pin: 2 };
+
+test('cloud pairing rejects board-local addresses and hides device secrets in serial logs', async () => {
+  const token = 'private-device-token-test';
+  const command = cloudConfigCommand('http://172.20.10.2:8000/', token);
+  assert.equal(command, `CLOUD SET http://172.20.10.2:8000 ${token}`);
+  for (const url of ['http://localhost:8000', 'http://127.0.0.1', 'http://device/api', 'http://user:pass@device', 'http://device:99999', 'ftp://device']) assert.throws(() => cloudConfigCommand(url, token));
+  assert.throws(() => cloudConfigCommand('https://controller.example.com', 'short'));
+  const mock = mockSession((command, emit) => emit(command === 'STATUS' ? `STATUS ${JSON.stringify(status)}\n` : 'OK CLOUD SET\n'));
+  await mock.session.open();
+  await mock.session.command(command);
+  assert.ok(!JSON.stringify(mock.logs).includes(token));
+  assert.ok(JSON.stringify(mock.logs).includes('凭据已隐藏'));
+  await mock.session.close();
+});
 
 test('preview follows breathing envelope, zero peak and independent Morse sequence', () => {
   const breathe = { ...DEFAULTS, mode: 'breathe' };

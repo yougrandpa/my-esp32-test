@@ -481,5 +481,37 @@ int main() {
   assert(command("DESK PAGE 0").find("ERR") == 0 && desk.navigation.buttonOwned);
   Preferences::failWrites = false;
   assert(command("DESK PAGE 0").find("OK DESK") == 0 && !desk.navigation.buttonOwned);
+  // Server pairing persists independently from Wi-Fi/desk configuration.
+  assert(command("CLOUD SET http://172.20.10.2:8000 device-secret-at-least-16").find("OK CLOUD SET") == 0);
+  assert(cloudControl.enabled);
+  CloudControl rebootedCloud; rebootedCloud.begin();
+  assert(rebootedCloud.enabled && !strcmp(rebootedCloud.config.url, "http://172.20.10.2:8000"));
+  char cloudStatus[4096]; assert(formatStatus(cloudStatus, sizeof(cloudStatus)));
+  assert(std::string(cloudStatus).find("device-secret") == std::string::npos);
+  const auto savedCloud = cloudControl.config;
+  Preferences::failWrites = true;
+  assert(command("CLOUD SET https://example.com another-device-secret").find("ERR") == 0);
+  assert(!strcmp(cloudControl.config.url, savedCloud.url));
+  assert(command("CLOUD CLEAR").find("ERR") == 0 && cloudControl.enabled);
+  Preferences::failWrites = false;
+  for (const char* invalid : {"CLOUD SET http://device/a device-secret-at-least-16", "CLOUD SET http://user:pass@device device-secret-at-least-16", "CLOUD SET http://device:99999 device-secret-at-least-16", "CLOUD SET http://device short", "CLOUD OFF extra"}) assert(command(invalid).find("ERR") == 0);
+  assert(command("CLOUD OFF").find("OK CLOUD OFF") == 0 && !cloudControl.enabled);
+  assert(command("CLOUD CONNECT").find("OK CLOUD CONNECT") == 0 && cloudControl.enabled);
+  // Duplicate IDs return the old acknowledgement without resetting the phase.
+  strcpy(cloudControl.requestId, "12345678-1234-1234-1234-123456789abc");
+  strcpy(cloudControl.requestCommand, "BREATHE 3000");
+  cloudControl.receivedAt = testTime; cloudControl.ttl = 1000;
+  cloudControl.applyRemote(); assert(cloudControl.lastOk);
+  const auto cloudStarted = effectStart;
+  testTime += 10; cloudControl.applyRemote(); assert(effectStart == cloudStarted);
+  strcpy(cloudControl.requestId, "12345678-1234-1234-1234-123456789abd");
+  strcpy(cloudControl.requestCommand, "ON");
+  cloudControl.receivedAt = testTime - 1000; cloudControl.applyRemote();
+  assert(!cloudControl.lastOk && effect.mode == MODE_BREATHE);
+  strcpy(cloudControl.requestId, "12345678-1234-1234-1234-123456789abe");
+  cloudControl.receivedAt = testTime; strcpy(cloudControl.requestCommand, "CLOUD CLEAR"); cloudControl.applyRemote();
+  assert(!cloudControl.lastOk && cloudControl.enabled);
+  assert(command("CLOUD CLEAR").find("OK CLOUD CLEAR") == 0 && !cloudControl.enabled);
+  assert(command("CLOUD CONNECT").find("ERR") == 0);
   std::cout << "Firmware: effects, Wi-Fi, HTTP, desk/reminders and BOOT navigation passed\n";
 }
